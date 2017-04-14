@@ -14,6 +14,7 @@ import torch
 import random
 import pandas as pd
 from PIL import Image
+import random
 class DatasetFromFolder(data.Dataset):
     def __init__(self, image_dir,dataframe_dir,vocab, transform=None):
         super(DatasetFromFolder, self).__init__()
@@ -42,8 +43,9 @@ class DatasetFromFolder(data.Dataset):
         image = Image.open(join(self.a_path, self.image_filenames[index])).convert('RGB')
         if self.transform is not None:
             image = self.transform(image)
-            
-        comment = self.comments[index]
+        
+        ## Split by comment then randomly pick one!
+        comment = random.choice (self.comments[index].split(" [END] "))
         tokens = nltk.tokenize.word_tokenize(str(comment).lower())
         caption = []
         caption.append(self.vocab('<start>'))

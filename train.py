@@ -20,6 +20,7 @@ def main(args):
     # Image preprocessing
     transform = transforms.Compose([ 
         transforms.RandomCrop(args.crop_size),
+        transforms.Scale(299),
         transforms.RandomHorizontalFlip(), 
         transforms.ToTensor(), 
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
@@ -36,7 +37,7 @@ def main(args):
     # Build the models
     encoder = EncoderCNN(args.embed_size)
     decoder = DecoderRNN(args.embed_size, args.hidden_size, 
-                         len(vocab), args.num_layers)
+                         vocab, args.num_layers)
     
     if torch.cuda.is_available():
         encoder.cuda()
@@ -44,7 +45,7 @@ def main(args):
 
     # Loss and Optimizer
     criterion = nn.CrossEntropyLoss()
-    params = list(decoder.parameters()) + list(encoder.resnet.fc.parameters())
+    params = list(decoder.parameters()) + list(encoder.inception.parameters())
     optimizer = torch.optim.Adam(params, lr=args.learning_rate)
     
     # Train the Models
@@ -88,7 +89,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_path', type=str, default='./models/' ,
                         help='path for saving trained models')
-    parser.add_argument('--crop_size', type=int, default=224 ,
+    parser.add_argument('--crop_size', type=int, default=255 ,
                         help='size for randomly cropping images')
     parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
                         help='path for vocabulary wrapper')
@@ -99,11 +100,11 @@ if __name__ == '__main__':
                         help='path for train annotation json file')
     parser.add_argument('--log_step', type=int , default=10,
                         help='step size for prining log info')
-    parser.add_argument('--save_step', type=int , default=1000,
+    parser.add_argument('--save_step', type=int , default=10000,
                         help='step size for saving trained models')
     
     # Model parameters
-    parser.add_argument('--embed_size', type=int , default=256 ,
+    parser.add_argument('--embed_size', type=int , default=300 ,
                         help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int , default=512 ,
                         help='dimension of lstm hidden states')

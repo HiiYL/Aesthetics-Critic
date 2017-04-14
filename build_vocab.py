@@ -34,8 +34,9 @@ def build_vocab(dataframe_path, threshold=4):
     
     counter = Counter()
     for i, comment in enumerate(ava_table.comments):
-        tokens = nltk.tokenize.word_tokenize(comment.lower())
-        counter.update(tokens)
+        for comment in comment.split(" [END] "):
+            tokens = nltk.tokenize.word_tokenize(comment.lower())
+            counter.update(tokens)
 
         if i % 1000 == 0:
             print("[%d/%d] Tokenized the captions." %(i, len(ava_table)))
