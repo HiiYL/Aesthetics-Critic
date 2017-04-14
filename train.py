@@ -5,11 +5,12 @@ import numpy as np
 import os
 from data_loader import get_loader 
 from build_vocab import Vocabulary
-from model import EncoderCNN, DecoderRNN 
+from models import EncoderCNN, DecoderRNN 
 from torch.autograd import Variable 
 from torch.nn.utils.rnn import pack_padded_sequence
 from torchvision import transforms
 
+import pickle
 
 def main(args):
     # Create model directory
@@ -24,11 +25,11 @@ def main(args):
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     
     # Load vocabulary wrapper.
-    # with open(vocab_path, 'rb') as f:
-    #     vocab = pickle.load(f)
+    with open(args.vocab_path, 'rb') as f:
+        vocab = pickle.load(f)
     
     # Build data loader
-    data_loader = get_loader(args.image_dir, args.caption_path, args.vocab_path, 
+    data_loader = get_loader(args.image_dir, args.comments_path, vocab, 
                              transform, args.batch_size,
                              shuffle=True, num_workers=args.num_workers) 
 
@@ -91,7 +92,7 @@ if __name__ == '__main__':
                         help='size for randomly cropping images')
     parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
                         help='path for vocabulary wrapper')
-    parser.add_argument('--image_dir', type=str, default='data/aesthetics' ,
+    parser.add_argument('--image_dir', type=str, default='data/aesthetics-full/train' ,
                         help='directory for resized images')
     parser.add_argument('--comments_path', type=str,
                         default='labels.h5',
@@ -110,7 +111,7 @@ if __name__ == '__main__':
                         help='number of layers in lstm')
     
     parser.add_argument('--num_epochs', type=int, default=5)
-    parser.add_argument('--batch_size', type=int, default=128)
+    parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--learning_rate', type=float, default=0.001)
     args = parser.parse_args()

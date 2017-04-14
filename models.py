@@ -5,6 +5,7 @@ import numpy as np
 from torch.autograd import Variable
 import math
 import torch.utils.model_zoo as model_zoo
+from torch.nn.utils.rnn import pack_padded_sequence
 import torchvision.models as models
 
 pretrained_path = "squeezenet1_1-f364aa15.pth"
@@ -12,7 +13,7 @@ class EncoderCNN(nn.Module):
     def __init__(self, embed_size):
         """Load the pretrained ResNet-152 and replace top fc layer."""
         super(EncoderCNN, self).__init__()
-        self.resnet = models.resnet152(pretrained=True)
+        self.resnet = models.resnet18(pretrained=True)
         for param in self.resnet.parameters():
             param.requires_grad = False
         self.resnet.fc = nn.Linear(self.resnet.fc.in_features, embed_size)
