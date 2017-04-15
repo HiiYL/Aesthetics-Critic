@@ -20,7 +20,6 @@ def main(args):
     # Image preprocessing
     transform = transforms.Compose([ 
         transforms.RandomCrop(args.crop_size),
-        transforms.Scale(299),
         transforms.RandomHorizontalFlip(), 
         transforms.ToTensor(), 
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
@@ -36,6 +35,7 @@ def main(args):
 
     # Build the models
     encoder = EncoderCNN(args.embed_size)
+    encoder.inception.transform_input = False
     decoder = DecoderRNN(args.embed_size, args.hidden_size, 
                          vocab, args.num_layers)
     
@@ -45,12 +45,20 @@ def main(args):
 
     # Loss and Optimizer
     criterion = nn.CrossEntropyLoss()
-    params = list(decoder.parameters()) + list(encoder.inception.parameters())
+    params = [
+                {'params': decoder.parameters()},
+                {'params': encoder.inception.parameters(), 'lr': args.learning_rate}
+            ]
     optimizer = torch.optim.Adam(params, lr=args.learning_rate)
     
     # Train the Models
     total_step = len(data_loader)
     for epoch in range(args.num_epochs):
+        if epoch % 8 == 0:
+            lr = args.learning_rate * (0.5 ** (epoch // 8))
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr
+
         for i, (images, captions, lengths) in enumerate(data_loader):
             
             # Set mini-batch dataset
@@ -89,11 +97,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_path', type=str, default='./models/' ,
                         help='path for saving trained models')
-    parser.add_argument('--crop_size', type=int, default=255 ,
+    parser.add_argument('--crop_size', type=int, default=299 ,
                         help='size for randomly cropping images')
     parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
                         help='path for vocabulary wrapper')
-    parser.add_argument('--image_dir', type=str, default='data/aesthetics-full/train' ,
+    parser.add_argument('--image_dir', type=str, default='data/aesthetics/train' ,
                         help='directory for resized images')
     parser.add_argument('--comments_path', type=str,
                         default='labels.h5',
@@ -111,7 +119,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_layers', type=int , default=1 ,
                         help='number of layers in lstm')
     
-    parser.add_argument('--num_epochs', type=int, default=5)
+    parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--learning_rate', type=float, default=0.001)

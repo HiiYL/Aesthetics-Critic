@@ -14,7 +14,6 @@ from PIL import Image
 def main(args):
     # Image preprocessing
     transform = transforms.Compose([ 
-        transforms.Scale(args.crop_size),  
         transforms.CenterCrop(args.crop_size),
         transforms.ToTensor(), 
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
@@ -38,7 +37,9 @@ def main(args):
     image = Image.open(args.image)
     image_tensor = Variable(transform(image).unsqueeze(0))
 
-    print(image_tensor)
+    encoder.inception.transform_input = False
+
+    #print(image_tensor)
     
     # Set initial states
     state = (Variable(torch.zeros(args.num_layers, 1, args.hidden_size)),
@@ -79,7 +80,7 @@ if __name__ == '__main__':
                         help='path for trained decoder')
     parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
                         help='path for vocabulary wrapper')
-    parser.add_argument('--crop_size', type=int, default=224,
+    parser.add_argument('--crop_size', type=int, default=299,
                         help='size for center cropping images')
     
     # Model parameters (should be same as paramters in train.py)
