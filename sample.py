@@ -35,7 +35,7 @@ def main(args):
 
     # Prepare Image       
     image = Image.open(args.image)
-    image_tensor = Variable(transform(image).unsqueeze(0))
+    image_tensor = Variable(transform(image).unsqueeze(0), volatile=True)
 
     encoder.inception.transform_input = False
 
@@ -54,6 +54,7 @@ def main(args):
     
     # Generate caption from image
     feature = encoder(image_tensor)
+
     sampled_ids = decoder.sample(feature)
     sampled_ids = sampled_ids.cpu().data.numpy()
     
@@ -88,7 +89,7 @@ if __name__ == '__main__':
                         help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int , default=512,
                         help='dimension of lstm hidden states')
-    parser.add_argument('--num_layers', type=int , default=1 ,
+    parser.add_argument('--num_layers', type=int , default=2 ,
                         help='number of layers in lstm')
     args = parser.parse_args()
     main(args)

@@ -20,11 +20,17 @@ class EncoderCNN(nn.Module):
 #        self.resnet.fc = nn.Linear(self.resnet.fc.in_features, embed_size)
 #        self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
 
-        self.inception = models.inception_v3(pretrained=True)
+        self.inception = models.inception_v3(pretrained=False)
         self.inception.aux_logits = False
         self.inception.transform_input = False
         self.inception.fc = nn.Linear(self.inception.fc.in_features, embed_size)
         self.init_weights()
+
+        for parameter in self.inception:
+            parameter.requires_grad = False
+
+        for parameter in self.inception:
+            parameter.requires_grad = True
         
     def init_weights(self):
         """Initialize the weights."""
@@ -95,6 +101,13 @@ class DecoderRNN(nn.Module):
             hiddens, states = self.lstm(inputs, hx=states)          # (batch_size, 1, hidden_size)
             outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
             predicted = outputs.max(1)[1]
+            # print(predicted)
+            sorted_outputs, indices = torch.sort(outputs, 1)
+            # print(indices)
+            # print(indices[:,-1].unsqueeze(0))
+            # print(predicted)
+            # exit()
+            # predicted = indices[:,-3].unsqueeze(0)
             sampled_ids.append(predicted)
             inputs = self.embed(predicted)
         sampled_ids = torch.cat(sampled_ids, 1)                  # (batch_size, 20)

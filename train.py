@@ -59,7 +59,7 @@ def main(args):
     #                 encoder..parameters())
     params = [
                 {'params': decoder.parameters()},
-                {'params': encoder.inception.parameters()}
+                {'params': encoder.inception.fc.parameters()}
             ]
     optimizer = torch.optim.Adam(params, lr=args.learning_rate)
 
@@ -190,7 +190,7 @@ if __name__ == '__main__':
                         help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int , default=512 ,
                         help='dimension of lstm hidden states')
-    parser.add_argument('--num_layers', type=int , default=1 ,
+    parser.add_argument('--num_layers', type=int , default=2 ,
                         help='number of layers in lstm')
     parser.add_argument('--pretrained', type=str, default='-2-20000.pkl')
     
