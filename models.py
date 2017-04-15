@@ -22,6 +22,7 @@ class EncoderCNN(nn.Module):
 
         self.inception = models.inception_v3(pretrained=True)
         self.inception.aux_logits = False
+        self.inception.transform_input = False
         self.inception.fc = nn.Linear(self.inception.fc.in_features, embed_size)
         self.init_weights()
         
@@ -97,7 +98,7 @@ class DecoderRNN(nn.Module):
         sampled_ids = torch.cat(sampled_ids, 1)                  # (batch_size, 20)
         return sampled_ids.squeeze()
 
-    def generateIndexMappingToEmbedding():
+    def generateIndexMappingToEmbedding(self):
         filename = 'glove.6B.300d.txt'
         print("Using pretrained GloVe from : {}".format(filename))
         embeddings_index = {}

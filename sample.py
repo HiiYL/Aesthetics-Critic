@@ -30,8 +30,8 @@ def main(args):
     
 
     # Load the trained model parameters
-    encoder.load_state_dict(torch.load(args.encoder_path))
-    decoder.load_state_dict(torch.load(args.decoder_path))
+    encoder.load_state_dict(torch.load(args.encoder_path, map_location=lambda storage, loc: storage))
+    decoder.load_state_dict(torch.load(args.decoder_path, map_location=lambda storage, loc: storage))
 
     # Prepare Image       
     image = Image.open(args.image)
@@ -74,9 +74,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--image', type=str, required=True,
                         help='input image for generating caption')
-    parser.add_argument('--encoder_path', type=str, default='models/encoder-1-10000.pkl',
+    parser.add_argument('--encoder_path', type=str, default='models/encoder-6-20000.pkl',
                         help='path for trained encoder')
-    parser.add_argument('--decoder_path', type=str, default='models/decoder-1-10000.pkl',
+    parser.add_argument('--decoder_path', type=str, default='models/decoder-6-20000.pkl',
                         help='path for trained decoder')
     parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
                         help='path for vocabulary wrapper')

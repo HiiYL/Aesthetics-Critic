@@ -34,10 +34,14 @@ def main(args):
                              shuffle=True, num_workers=args.num_workers) 
 
     # Build the models
-    encoder = EncoderCNN(args.embed_size)
-    encoder.inception.transform_input = False
-    decoder = DecoderRNN(args.embed_size, args.hidden_size, 
-                         vocab, args.num_layers)
+
+    if args.pretrained:
+        encoder.load_state_dict(torch.load('models/encoder-{}'.format(args.pretrained)))
+        decoder.load_state_dict(torch.load('models/decoder-{}'.format(args.pretrained)))
+    else:
+        encoder = EncoderCNN(args.embed_size)
+        decoder = DecoderRNN(args.embed_size, args.hidden_size, 
+                             vocab, args.num_layers)
     
     if torch.cuda.is_available():
         encoder.cuda()
@@ -77,6 +81,15 @@ def main(args):
             loss = criterion(outputs, targets)
             loss.backward()
             optimizer.step()
+
+
+            sampled_caption = []
+            for word_id in outputs:
+                word = vocab.idx2word[word_id]
+                sampled_caption.append(word)
+                if word == '<end>':
+                    break
+            sentence = ' '.join(sampled_caption)
 
             # Print log info
             if i % args.log_step == 0:
@@ -118,6 +131,7 @@ if __name__ == '__main__':
                         help='dimension of lstm hidden states')
     parser.add_argument('--num_layers', type=int , default=1 ,
                         help='number of layers in lstm')
+    parser.add_argument('--pretrained', type=str, default='-6-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=8)
