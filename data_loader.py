@@ -16,6 +16,10 @@ import pandas as pd
 from PIL import Image
 import random
 from bisect import bisect
+
+# from pandas import HDFStore
+# store = HDFStore('labels.h5')
+# ava_table = store['labels_train']
 class DatasetFromFolder(data.Dataset):
     def __init__(self, image_dir,dataframe_dir,vocab, transform=None):
         super(DatasetFromFolder, self).__init__()
@@ -24,7 +28,41 @@ class DatasetFromFolder(data.Dataset):
         ava_table = self.store['labels_train']
         self.a_path = join(image_dir, "a")
 
+        print("Filtering low effort posts...")
+
+        magic_effort_number = 10
+
+
+        image_comments = ava_table.comments
+        image_ids = ava_table.index
+
+        image_comments_with_effort = []
+        image_ids_with_effort = []
+
+        for iteration, image_comment in enumerate(image_comments):
+            if iteration % 1000 == 0:
+                print("[ %i / %i ] Checking comments for effort ..." % (iteration, len(image_comments)))
+            comments = image_comment.split(" [END] ")
+            valid_comments = []
+            image_with_effort_comments = False
+            for comment in comments:
+                tokens = nltk.tokenize.word_tokenize(str(comment).lower())
+                if len(tokens) > magic_effort_number:
+                    valid_comments.append(tokens)
+                    image_with_effort_comments = True
+
+            if image_with_effort_comments:
+                image_comments_with_effort.append(valid_comments)
+                image_ids_with_effort.append(image_ids[iteration ])
+
+        self.comment_tokens = image_comments_with_effort
+
+        print("{} low effort images with comments removed..".format(ava_table.shape[0] - len(image_comments_with_effort)))
+
+        ava_table = ava_table.ix[image_ids_with_effort]
+
         filenames = [ "{}.jpg".format(x) for x in ava_table.index ]
+
         self.image_filenames = [ x for x in filenames if is_image_file(x) ]
 
         if(len(self.image_filenames) != len(filenames)):
@@ -46,14 +84,15 @@ class DatasetFromFolder(data.Dataset):
             image = self.transform(image)
         
         ## Split by comment then randomly pick one!
-        comments = self.comments[index].split(" [END] ")
-        if(len(comments) > 1):
-            weighted_comments = [(comment, len(comment)) for comment in comments ]
-            comment = self.weighted_choice(weighted_comments)
-        else:
-            comment = comments[0]
+        # comments = self.comments[index].split(" [END] ")
+        # if(len(comments) > 1):
+        #     weighted_comments = [(comment, len(comment)) for comment in comments ]
+        #     comment = self.weighted_choice(weighted_comments)
+        # else:
+        #     comment = comments[0]
             
-        tokens = nltk.tokenize.word_tokenize(str(comment).lower())
+        # tokens = nltk.tokenize.word_tokenize(str(comment).lower())
+        tokens = self.comment_tokens[index]
         caption = []
         caption.append(self.vocab('<start>'))
         caption.extend([self.vocab(token) for token in tokens])

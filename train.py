@@ -43,11 +43,8 @@ def main(args):
         encoder.load_state_dict(torch.load('models/encoder{}'.format(args.pretrained)))
         decoder.load_state_dict(torch.load('models/decoder{}'.format(args.pretrained)))
 
-    # Set initial states
-    state = (Variable(torch.zeros(args.num_layers, 1, args.hidden_size)),
-             Variable(torch.zeros(args.num_layers, 1, args.hidden_size)))
+
     if torch.cuda.is_available():
-        state = [s.cuda() for s in state]
         encoder.cuda()
         decoder.cuda()
 
@@ -62,18 +59,10 @@ def main(args):
                 {'params': encoder.inception.fc.parameters()}
             ]
     optimizer = torch.optim.Adam(params, lr=args.learning_rate)
-
-    def repackage_hidden(h):
-        """Wraps hidden states in new Variables, to detach them from their history."""
-        if type(h) == Variable:
-            return Variable(h.data)
-        else:
-            return tuple(repackage_hidden(v) for v in h)
     
     # Train the Models
     total_step = len(data_loader)
 
-    hidden=None
     for epoch in range(args.num_epochs):
         if epoch % 8 == 0:
             lr = args.learning_rate * (0.5 ** (epoch // 8))
@@ -90,8 +79,6 @@ def main(args):
                 captions = captions.cuda()
             targets = pack_padded_sequence(captions, lengths, batch_first=True)[0]
 
-            if hidden is not None:
-                hidden = repackage_hidden(hidden)
             # Forward, Backward and Optimize
             decoder.zero_grad()
             encoder.zero_grad()
@@ -143,21 +130,21 @@ def main(args):
                       %(epoch, args.num_epochs, i, total_step, 
                         loss.data[0], np.exp(loss.data[0]))) 
             
-            if (i % (args.log_step * 10))  == 0:
-                print()
-                print()
-                sampled_ids = decoder.sample(features)
-                sampled_ids = sampled_ids.cpu().data.numpy()
+            # if (i % (args.log_step * 10))  == 0:
+            #     print()
+            #     print()
+            #     sampled_ids = decoder.sample(features)
+            #     sampled_ids = sampled_ids.cpu().data.numpy()
                 
-                # Decode word_ids to words
-                sampled_caption = []
-                for word_id in sampled_ids[0]:
-                    word = vocab.idx2word[word_id]
-                    sampled_caption.append(word)
-                    if word == '<end>':
-                        break
-                sentence = ' '.join(sampled_caption)
-                print(sentence)
+            #     # Decode word_ids to words
+            #     sampled_caption = []
+            #     for word_id in sampled_ids[0]:
+            #         word = vocab.idx2word[word_id]
+            #         sampled_caption.append(word)
+            #         if word == '<end>':
+            #             break
+            #     sentence = ' '.join(sampled_caption)
+            #     print(sentence)
             # Save the models
             if (i+1) % args.save_step == 0:
                 torch.save(decoder.state_dict(), 

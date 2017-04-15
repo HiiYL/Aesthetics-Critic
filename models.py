@@ -20,7 +20,7 @@ class EncoderCNN(nn.Module):
 #        self.resnet.fc = nn.Linear(self.resnet.fc.in_features, embed_size)
 #        self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
 
-        self.inception = models.inception_v3(pretrained=False)
+        self.inception = models.inception_v3(pretrained=True)
         self.inception.aux_logits = False
         self.inception.transform_input = False
         self.inception.fc = nn.Linear(self.inception.fc.in_features, embed_size)
@@ -29,7 +29,7 @@ class EncoderCNN(nn.Module):
         for parameter in self.inception:
             parameter.requires_grad = False
 
-        for parameter in self.inception:
+        for parameter in self.inception.fc:
             parameter.requires_grad = True
         
     def init_weights(self):
