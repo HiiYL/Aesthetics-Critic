@@ -186,13 +186,13 @@ if __name__ == '__main__':
                         help='step size for saving trained models')
     
     # Model parameters
-    parser.add_argument('--embed_size', type=int , default=300 ,
+    parser.add_argument('--embed_size', type=int , default=512 ,
                         help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int , default=512 ,
                         help='dimension of lstm hidden states')
     parser.add_argument('--num_layers', type=int , default=2 ,
                         help='number of layers in lstm')
-    parser.add_argument('--pretrained', type=str, default='-2-20000.pkl')
+    parser.add_argument('--pretrained', type=str)#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=8)

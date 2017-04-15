@@ -85,7 +85,7 @@ if __name__ == '__main__':
                         help='size for center cropping images')
     
     # Model parameters (should be same as paramters in train.py)
-    parser.add_argument('--embed_size', type=int , default=300,
+    parser.add_argument('--embed_size', type=int , default=512,
                         help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int , default=512,
                         help='dimension of lstm hidden states')

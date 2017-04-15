@@ -51,33 +51,33 @@ class DecoderRNN(nn.Module):
         vocab_size = len(vocab)
         # self.embed = nn.Embedding(vocab_size, embed_size)
 
-        matrix_filepath='data/embedding_matrix.npy'
-        if not os.path.isfile(matrix_filepath):
-            print("generating embedding...")
-            embeddings_index = self.generateIndexMappingToEmbedding()
-            embedding_matrix = np.zeros((len(self.vocab) + 1, 300))
-            for word, i in vocab.word2idx.items():
-                embedding_vector = embeddings_index.get(word)
-                if embedding_vector is not None:
-                    # words not found in embedding index will be all-zeros.
-                    embedding_matrix[i] = embedding_vector
-            embedding_matrix.tofile(matrix_filepath)
-        else:
-            embedding_matrix = np.fromfile(matrix_filepath)
-            embedding_matrix = embedding_matrix.reshape((len(self.vocab) + 1, 300))
+        # matrix_filepath='data/embedding_matrix.npy'
+        # if not os.path.isfile(matrix_filepath):
+        #     print("generating embedding...")
+        #     embeddings_index = self.generateIndexMappingToEmbedding()
+        #     embedding_matrix = np.zeros((len(self.vocab) + 1, 300))
+        #     for word, i in vocab.word2idx.items():
+        #         embedding_vector = embeddings_index.get(word)
+        #         if embedding_vector is not None:
+        #             # words not found in embedding index will be all-zeros.
+        #             embedding_matrix[i] = embedding_vector
+        #     embedding_matrix.tofile(matrix_filepath)
+        # else:
+        #     embedding_matrix = np.fromfile(matrix_filepath)
+        #     embedding_matrix = embedding_matrix.reshape((len(self.vocab) + 1, 300))
 
-        embeddings = torch.from_numpy(embedding_matrix).float()
+        # embeddings = torch.from_numpy(embedding_matrix).float()
 
-        self.embed = nn.Embedding(embeddings.size(0), embeddings.size(1))
-        self.embed.weight = nn.Parameter(embeddings)
+        self.embed = nn.Embedding(len(self.vocab), embed_size)
+        # self.embed.weight = nn.Parameter(embeddings)
 
-        self.lstm = nn.LSTM(embed_size, hidden_size, num_layers, batch_first=True)
+        self.gru = nn.GRU(embed_size, hidden_size, num_layers, batch_first=True)
         self.linear = nn.Linear(hidden_size, vocab_size)
         self.init_weights()
     
     def init_weights(self):
         """Initialize weights."""
-        # self.embed.weight.data.uniform_(-0.1, 0.1)
+        self.embed.weight.data.uniform_(-0.1, 0.1)
 
         self.linear.weight.data.uniform_(-0.1, 0.1)
         self.linear.bias.data.fill_(0)
@@ -87,7 +87,7 @@ class DecoderRNN(nn.Module):
         embeddings = self.embed(captions)
         embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
         packed = pack_padded_sequence(embeddings, lengths, batch_first=True) 
-        hiddens, _ = self.lstm(packed)
+        hiddens, _ = self.gru(packed)
         outputs = self.linear(hiddens[0])
         return outputs
     
@@ -98,7 +98,7 @@ class DecoderRNN(nn.Module):
         inputs = features.unsqueeze(1)
         
         for i in range(50):                                      # maximum sampling length
-            hiddens, states = self.lstm(inputs, hx=states)          # (batch_size, 1, hidden_size)
+            hiddens, states = self.gru(inputs, hx=states)          # (batch_size, 1, hidden_size)
             outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
             predicted = outputs.max(1)[1]
             # print(predicted)
