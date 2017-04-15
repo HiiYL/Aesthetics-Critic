@@ -21,11 +21,12 @@ from bisect import bisect
 # store = HDFStore('labels.h5')
 # ava_table = store['labels_train']
 class DatasetFromFolder(data.Dataset):
-    def __init__(self, image_dir,dataframe_dir,vocab, transform=None):
+    def __init__(self, image_dir,dataframe_dir,vocab, transform=None, delta=2):
         super(DatasetFromFolder, self).__init__()
         self.store = HDFStore(dataframe_dir)
         print("[!] Loading {} set... ".format(image_dir))
         ava_table = self.store['labels_train']
+        ava_table = ava_table.ix[(ava_table.score > 5 + delta) | (ava_table.score < 5 - delta)]
         self.a_path = join(image_dir, "a")
 
         print("Filtering low effort posts...")
@@ -48,11 +49,11 @@ class DatasetFromFolder(data.Dataset):
             for comment in comments:
                 tokens = nltk.tokenize.word_tokenize(str(comment).lower())
                 if len(tokens) > magic_effort_number:
-                    valid_comments.append(tokens)
+                    valid_comments.append('@@@'.join(tokens))
                     image_with_effort_comments = True
 
             if image_with_effort_comments:
-                image_comments_with_effort.append(valid_comments)
+                image_comments_with_effort.append('|||'.join(valid_comments))
                 image_ids_with_effort.append(image_ids[iteration ])
 
         self.comment_tokens = image_comments_with_effort
@@ -84,15 +85,16 @@ class DatasetFromFolder(data.Dataset):
             image = self.transform(image)
         
         ## Split by comment then randomly pick one!
-        # comments = self.comments[index].split(" [END] ")
-        # if(len(comments) > 1):
-        #     weighted_comments = [(comment, len(comment)) for comment in comments ]
-        #     comment = self.weighted_choice(weighted_comments)
-        # else:
-        #     comment = comments[0]
+        comments = self.comment_tokens[index].split('|||')
+
+        if(len(comments) > 1):
+            weighted_comments = [(comment.split('@@@'), len(comment.split('@@@'))) for comment in comments ]
+            comment = self.weighted_choice(weighted_comments)
+        else:
+            comment = comments[0]
             
         # tokens = nltk.tokenize.word_tokenize(str(comment).lower())
-        tokens = self.comment_tokens[index]
+        tokens = comment.split('@@@')
         caption = []
         caption.append(self.vocab('<start>'))
         caption.extend([self.vocab(token) for token in tokens])
