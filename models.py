@@ -85,12 +85,14 @@ class DecoderRNN(nn.Module):
         outputs = self.linear(hiddens[0])
         return outputs
     
-    def sample(self, features, states):
+    def sample(self, features,states = None):
         """Samples captions for given image features (Greedy search)."""
+
         sampled_ids = []
         inputs = features.unsqueeze(1)
+        
         for i in range(50):                                      # maximum sampling length
-            hiddens, states = self.lstm(inputs, states)          # (batch_size, 1, hidden_size)
+            hiddens, states = self.lstm(inputs, hx=states)          # (batch_size, 1, hidden_size)
             outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
             predicted = outputs.max(1)[1]
             sampled_ids.append(predicted)
@@ -140,7 +142,7 @@ def squeezenet1_1(pretrained=False, **kwargs):
     return model
 
 class SqueezeNet(nn.Module):
-    def __init__(self, num_classes=10):
+    def __init__(self):
         super(SqueezeNet, self).__init__()
         self.num_classes = num_classes
             

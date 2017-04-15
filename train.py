@@ -35,28 +35,45 @@ def main(args):
 
     # Build the models
 
-    if args.pretrained:
-        encoder.load_state_dict(torch.load('models/encoder-{}'.format(args.pretrained)))
-        decoder.load_state_dict(torch.load('models/decoder-{}'.format(args.pretrained)))
-    else:
-        encoder = EncoderCNN(args.embed_size)
-        decoder = DecoderRNN(args.embed_size, args.hidden_size, 
+    encoder = EncoderCNN(args.embed_size)
+    decoder = DecoderRNN(args.embed_size, args.hidden_size, 
                              vocab, args.num_layers)
-    
+
+    if args.pretrained:
+        encoder.load_state_dict(torch.load('models/encoder{}'.format(args.pretrained)))
+        decoder.load_state_dict(torch.load('models/decoder{}'.format(args.pretrained)))
+
+    # Set initial states
+    state = (Variable(torch.zeros(args.num_layers, 1, args.hidden_size)),
+             Variable(torch.zeros(args.num_layers, 1, args.hidden_size)))
     if torch.cuda.is_available():
+        state = [s.cuda() for s in state]
         encoder.cuda()
         decoder.cuda()
 
     # Loss and Optimizer
     criterion = nn.CrossEntropyLoss()
+
+    #fc_params = list(map(id, encoder.inception.fc.parameters()))
+    #base_params = filter(lambda p: id(p) not in ignored_params,
+    #                 encoder..parameters())
     params = [
                 {'params': decoder.parameters()},
-                {'params': encoder.inception.parameters(), 'lr': args.learning_rate}
+                {'params': encoder.inception.parameters()}
             ]
     optimizer = torch.optim.Adam(params, lr=args.learning_rate)
+
+    def repackage_hidden(h):
+        """Wraps hidden states in new Variables, to detach them from their history."""
+        if type(h) == Variable:
+            return Variable(h.data)
+        else:
+            return tuple(repackage_hidden(v) for v in h)
     
     # Train the Models
     total_step = len(data_loader)
+
+    hidden=None
     for epoch in range(args.num_epochs):
         if epoch % 8 == 0:
             lr = args.learning_rate * (0.5 ** (epoch // 8))
@@ -72,31 +89,75 @@ def main(args):
                 images = images.cuda()
                 captions = captions.cuda()
             targets = pack_padded_sequence(captions, lengths, batch_first=True)[0]
-            
+
+            if hidden is not None:
+                hidden = repackage_hidden(hidden)
             # Forward, Backward and Optimize
             decoder.zero_grad()
             encoder.zero_grad()
             features = encoder(images)
             outputs = decoder(features, captions, lengths)
+
             loss = criterion(outputs, targets)
             loss.backward()
+
+            torch.nn.utils.clip_grad_norm(decoder.parameters(), args.clip)
             optimizer.step()
 
+            #print(targets)
+            #print(outputs)
+            #exit()
 
-            sampled_caption = []
-            for word_id in outputs:
-                word = vocab.idx2word[word_id]
-                sampled_caption.append(word)
-                if word == '<end>':
-                    break
-            sentence = ' '.join(sampled_caption)
+
+            #print()
+            #print()
+
 
             # Print log info
             if i % args.log_step == 0:
+
+                #sampled_caption = []
+                #for idx, word_id in enumerate(outputs):
+                #    if idx % 8 == 0:
+                #        word = vocab.idx2word[np.argmax(word_id.data.cpu().numpy())]
+                #        sampled_caption.append(word)
+                #        if word == '<end>':
+                #            break
+                #sentence = ' '.join(sampled_caption)
+                #print(sentence)
+                #print()
+
+                #sampled_caption = []
+                #for idx, word_id in enumerate(targets.data.cpu().numpy()):
+                #    if idx % 8 == 0:
+                #        word = vocab.idx2word[word_id]
+                #        sampled_caption.append(word)
+                #        if word == '<end>':
+                #            break
+                #sentence = ' '.join(sampled_caption)
+                #print(sentence)
+                #print()
+
+
                 print('Epoch [%d/%d], Step [%d/%d], Loss: %.4f, Perplexity: %5.4f'
                       %(epoch, args.num_epochs, i, total_step, 
                         loss.data[0], np.exp(loss.data[0]))) 
+            
+            if (i % (args.log_step * 10))  == 0:
+                print()
+                print()
+                sampled_ids = decoder.sample(features)
+                sampled_ids = sampled_ids.cpu().data.numpy()
                 
+                # Decode word_ids to words
+                sampled_caption = []
+                for word_id in sampled_ids[0]:
+                    word = vocab.idx2word[word_id]
+                    sampled_caption.append(word)
+                    if word == '<end>':
+                        break
+                sentence = ' '.join(sampled_caption)
+                print(sentence)
             # Save the models
             if (i+1) % args.save_step == 0:
                 torch.save(decoder.state_dict(), 
@@ -131,12 +192,13 @@ if __name__ == '__main__':
                         help='dimension of lstm hidden states')
     parser.add_argument('--num_layers', type=int , default=1 ,
                         help='number of layers in lstm')
-    parser.add_argument('--pretrained', type=str, default='-6-20000.pkl')
+    parser.add_argument('--pretrained', type=str, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--learning_rate', type=float, default=0.001)
+    parser.add_argument('--clip', type=float, default=0.25,help='gradient clipping')
     args = parser.parse_args()
     print(args)
     main(args)

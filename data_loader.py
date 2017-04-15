@@ -15,6 +15,7 @@ import random
 import pandas as pd
 from PIL import Image
 import random
+from bisect import bisect
 class DatasetFromFolder(data.Dataset):
     def __init__(self, image_dir,dataframe_dir,vocab, transform=None):
         super(DatasetFromFolder, self).__init__()
@@ -45,7 +46,13 @@ class DatasetFromFolder(data.Dataset):
             image = self.transform(image)
         
         ## Split by comment then randomly pick one!
-        comment = random.choice (self.comments[index].split(" [END] "))
+        comments = self.comments[index].split(" [END] ")
+        if(len(comments) > 1):
+            weighted_comments = [(comment, len(comment)) for comment in comments ]
+            comment = self.weighted_choice(weighted_comments)
+        else:
+            comment = comments[0]
+            
         tokens = nltk.tokenize.word_tokenize(str(comment).lower())
         caption = []
         caption.append(self.vocab('<start>'))
@@ -53,6 +60,17 @@ class DatasetFromFolder(data.Dataset):
         caption.append(self.vocab('<end>'))
         target = torch.Tensor(caption)
         return image, target
+
+    def weighted_choice(self,choices):
+        values, weights = zip(*choices)
+        total = 0
+        cum_weights = []
+        for w in weights:
+            total += w
+            cum_weights.append(total)
+        x = random.random() * total
+        i = bisect(cum_weights, x)
+        return values[i]
 
     def __len__(self):
         return len(self.image_filenames)
