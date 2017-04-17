@@ -13,7 +13,7 @@ from PIL import Image
 
 def main(args):
     # Image preprocessing
-    transform = transforms.Compose([ 
+    transform = transforms.Compose([
         transforms.CenterCrop(args.crop_size),
         transforms.ToTensor(), 
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
@@ -46,11 +46,11 @@ def main(args):
     #         Variable(torch.zeros(args.num_layers, 1, args.hidden_size)))
     
     # If use gpu
-    if torch.cuda.is_available():
-        encoder.cuda()
-        decoder.cuda()
+    #if torch.cuda.is_available():
+    #    encoder.cuda()
+    #    decoder.cuda()
         #state = [s.cuda() for s in state]
-        image_tensor = image_tensor.cuda()
+    #    image_tensor = image_tensor.cuda()
     
     # Generate caption from image
     feature = encoder(image_tensor)
@@ -75,9 +75,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--image', type=str, required=True,
                         help='input image for generating caption')
-    parser.add_argument('--encoder_path', type=str, default='models/encoder-2-20000.pkl',
+    parser.add_argument('--encoder_path', type=str, default='models/encoder-11-20000.pkl',
                         help='path for trained encoder')
-    parser.add_argument('--decoder_path', type=str, default='models/decoder-2-20000.pkl',
+    parser.add_argument('--decoder_path', type=str, default='models/decoder-11-20000.pkl',
                         help='path for trained decoder')
     parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
                         help='path for vocabulary wrapper')

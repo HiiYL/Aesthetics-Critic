@@ -5,7 +5,7 @@ import numpy as np
 from torch.autograd import Variable
 import math
 import torch.utils.model_zoo as model_zoo
-from torch.nn.utils.rnn import pack_padded_sequence
+from torch.nn.utils.rnn import pack_padded_sequence,pad_packed_sequence
 import torchvision.models as models
 import os
 
@@ -20,17 +20,13 @@ class EncoderCNN(nn.Module):
 #        self.resnet.fc = nn.Linear(self.resnet.fc.in_features, embed_size)
 #        self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
 
-        self.inception = models.inception_v3(pretrained=True)
+        self.inception = torch.load('net_model_epoch_10.pth').inception
         self.inception.aux_logits = False
         self.inception.transform_input = False
+        for parameter in self.inception.parameters():
+            parameter.requires_grad = False
         self.inception.fc = nn.Linear(self.inception.fc.in_features, embed_size)
         self.init_weights()
-
-        for parameter in self.inception:
-            parameter.requires_grad = False
-
-        for parameter in self.inception.fc:
-            parameter.requires_grad = True
         
     def init_weights(self):
         """Initialize the weights."""
@@ -43,6 +39,25 @@ class EncoderCNN(nn.Module):
         #features = self.bn(features)
         return features
 
+
+class InceptionNet(nn.Module):
+
+    def __init__(self, num_classes=10):
+        super(InceptionNet, self).__init__()
+        self.inception = models.inception_v3(pretrained=True)
+        self.inception.aux_logits = False
+        self.inception.transform_input = False
+        self.inception.fc = nn.Linear(self.inception.fc.in_features, 10)
+
+        # self.log_softmax = nn.LogSoftmax()
+
+    def forward(self, x):
+        x = self.inception(x)
+        # x = self.log_softmax(x)
+
+        return x
+
+        
 class DecoderRNN(nn.Module):
     def __init__(self, embed_size, hidden_size, vocab, num_layers):
         """Set the hyper-parameters and build the layers."""
@@ -71,8 +86,16 @@ class DecoderRNN(nn.Module):
         self.embed = nn.Embedding(len(self.vocab), embed_size)
         # self.embed.weight = nn.Parameter(embeddings)
 
-        self.gru = nn.GRU(embed_size, hidden_size, num_layers, batch_first=True)
+        self.lstm = nn.LSTM(embed_size, hidden_size, num_layers,dropout=0.3, batch_first=True)
         self.linear = nn.Linear(hidden_size, vocab_size)
+
+
+        ## Tie weights
+        self.embed.weight = self.linear.weight
+
+        self.drop = nn.Dropout(0.5)
+
+
         self.init_weights()
     
     def init_weights(self):
@@ -84,47 +107,42 @@ class DecoderRNN(nn.Module):
         
     def forward(self, features, captions, lengths):
         """Decode image feature vectors and generates captions."""
-        embeddings = self.embed(captions)
+        embeddings = self.drop(self.embed(captions))
         embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
         packed = pack_padded_sequence(embeddings, lengths, batch_first=True) 
-        hiddens, _ = self.gru(packed)
-        outputs = self.linear(hiddens[0])
+        hiddens, _ = self.lstm(packed)
+        outputs = self.linear(self.drop(hiddens[0]))
+        #print(lengths)
+        #outputs = pad_packed_sequence((outputs, lengths),batch_first=False)
+        #print(outputs)
         return outputs
-    
-    def sample(self, features,states = None):
-        """Samples captions for given image features (Greedy search)."""
 
+    
+    def sample(self, features, states):
+        """Samples captions for given image features (Greedy search)."""
         sampled_ids = []
         inputs = features.unsqueeze(1)
-        
-        for i in range(50):                                      # maximum sampling length
-            hiddens, states = self.gru(inputs, hx=states)          # (batch_size, 1, hidden_size)
+        for i in range(20):                                      # maximum sampling length
+            hiddens, states = self.lstm(inputs, states)          # (batch_size, 1, hidden_size)
             outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
             predicted = outputs.max(1)[1]
-            # print(predicted)
-            sorted_outputs, indices = torch.sort(outputs, 1)
-            # print(indices)
-            # print(indices[:,-1].unsqueeze(0))
-            # print(predicted)
-            # exit()
-            # predicted = indices[:,-3].unsqueeze(0)
             sampled_ids.append(predicted)
             inputs = self.embed(predicted)
         sampled_ids = torch.cat(sampled_ids, 1)                  # (batch_size, 20)
         return sampled_ids.squeeze()
 
-    def generateIndexMappingToEmbedding(self):
-        filename = 'glove.6B.300d.txt'
-        print("Using pretrained GloVe from : {}".format(filename))
-        embeddings_index = {}
-        with open(filename,'r') as f:
-          for line in f:
-              values = line.split()
-              word = values[0]
-              coefs = np.asarray(values[1:], dtype='float32')
-              embeddings_index[word] = coefs
-        print('Found %s word vectors.' % len(embeddings_index))
-        return embeddings_index
+    # def generateIndexMappingToEmbedding(self):
+    #     filename = 'glove.6B.300d.txt'
+    #     print("Using pretrained GloVe from : {}".format(filename))
+    #     embeddings_index = {}
+    #     with open(filename,'r') as f:
+    #       for line in f:
+    #           values = line.split()
+    #           word = values[0]
+    #           coefs = np.asarray(values[1:], dtype='float32')
+    #           embeddings_index[word] = coefs
+    #     print('Found %s word vectors.' % len(embeddings_index))
+    #     return embeddings_index
 
 class Fire(nn.Module):
 

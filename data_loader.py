@@ -47,15 +47,17 @@ class DatasetFromFolder(data.Dataset):
         
         ## Split by comment then randomly pick one!
         comments = self.comments[index].split(" [END] ")
+        #comments.sort(key=len)
         if(len(comments) > 1):
             weighted_comments = [(comment, len(comment)) for comment in comments ]
             comment = self.weighted_choice(weighted_comments)
         else:
             comment = comments[0]
+        #comment = comments[len(comments) - 1]
             
         tokens = nltk.tokenize.word_tokenize(str(comment).lower())
         caption = []
-        caption.append(self.vocab('<start>'))
+        #caption.append(self.vocab('<start>'))
         caption.extend([self.vocab(token) for token in tokens])
         caption.append(self.vocab('<end>'))
         target = torch.Tensor(caption)
