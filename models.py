@@ -8,6 +8,7 @@ import torch.utils.model_zoo as model_zoo
 from torch.nn.utils.rnn import pack_padded_sequence,pad_packed_sequence
 import torchvision.models as models
 import os
+from inception import inception_v3
 
 pretrained_path = "squeezenet1_1-f364aa15.pth"
 class EncoderCNN(nn.Module):
@@ -20,7 +21,11 @@ class EncoderCNN(nn.Module):
 #        self.resnet.fc = nn.Linear(self.resnet.fc.in_features, embed_size)
 #        self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
 
+<<<<<<< HEAD
         self.inception = torch.load('net_model_epoch_10.pth').inception
+=======
+        self.inception = inception_v3(pretrained=True)
+>>>>>>> ac4e49e8cf0399bf06be56635fc04e338a486fed
         self.inception.aux_logits = False
         self.inception.transform_input = False
         for parameter in self.inception.parameters():
