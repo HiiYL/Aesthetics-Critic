@@ -8,7 +8,6 @@ import torch.utils.model_zoo as model_zoo
 from torch.nn.utils.rnn import pack_padded_sequence,pad_packed_sequence
 import torchvision.models as models
 import os
-from inception import inception_v3
 
 pretrained_path = "squeezenet1_1-f364aa15.pth"
 class EncoderCNN(nn.Module):
@@ -20,12 +19,7 @@ class EncoderCNN(nn.Module):
 #            param.requires_grad = False
 #        self.resnet.fc = nn.Linear(self.resnet.fc.in_features, embed_size)
 #        self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
-
-<<<<<<< HEAD
         self.inception = torch.load('net_model_epoch_10.pth').inception
-=======
-        self.inception = inception_v3(pretrained=True)
->>>>>>> ac4e49e8cf0399bf06be56635fc04e338a486fed
         self.inception.aux_logits = False
         self.inception.transform_input = False
         for parameter in self.inception.parameters():
@@ -91,7 +85,7 @@ class DecoderRNN(nn.Module):
         self.embed = nn.Embedding(len(self.vocab), embed_size)
         # self.embed.weight = nn.Parameter(embeddings)
 
-        self.lstm = nn.LSTM(embed_size, hidden_size, num_layers,dropout=0.3, batch_first=True)
+        self.gru = nn.GRU(embed_size, hidden_size, num_layers,dropout=0.3, batch_first=True)
         self.linear = nn.Linear(hidden_size, vocab_size)
 
 
@@ -115,12 +109,31 @@ class DecoderRNN(nn.Module):
         embeddings = self.drop(self.embed(captions))
         embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
         packed = pack_padded_sequence(embeddings, lengths, batch_first=True) 
-        hiddens, _ = self.lstm(packed)
+        hiddens, _ = self.gru(packed)
         outputs = self.linear(self.drop(hiddens[0]))
         #print(lengths)
         #outputs = pad_packed_sequence((outputs, lengths),batch_first=False)
         #print(outputs)
         return outputs
+
+    def forward_blind(self, features, lengths):
+        """Samples captions for given image features (Greedy search)."""
+        sampled_ids = []
+        states = None
+        inputs = features.unsqueeze(1)
+        to_sample = []
+        for word in range(lengths[0]):
+            hiddens, states = self.gru(inputs, states)
+            outputs = self.linear(hiddens.squeeze(1))
+            predicted = outputs.max(1)
+            print(predicted)
+            exit()
+            inputs = self.embed(predicted)
+            to_sample.append(outputs)
+
+        to_sample = torch.cat(to_sample,0)
+
+        return to_sample
 
     
     def sample(self, features, states):
@@ -128,7 +141,7 @@ class DecoderRNN(nn.Module):
         sampled_ids = []
         inputs = features.unsqueeze(1)
         for i in range(20):                                      # maximum sampling length
-            hiddens, states = self.lstm(inputs, states)          # (batch_size, 1, hidden_size)
+            hiddens, states = self.gru(inputs, states)          # (batch_size, 1, hidden_size)
             outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
             predicted = outputs.max(1)[1]
             sampled_ids.append(predicted)
@@ -136,18 +149,84 @@ class DecoderRNN(nn.Module):
         sampled_ids = torch.cat(sampled_ids, 1)                  # (batch_size, 20)
         return sampled_ids.squeeze()
 
-    # def generateIndexMappingToEmbedding(self):
-    #     filename = 'glove.6B.300d.txt'
-    #     print("Using pretrained GloVe from : {}".format(filename))
-    #     embeddings_index = {}
-    #     with open(filename,'r') as f:
-    #       for line in f:
-    #           values = line.split()
-    #           word = values[0]
-    #           coefs = np.asarray(values[1:], dtype='float32')
-    #           embeddings_index[word] = coefs
-    #     print('Found %s word vectors.' % len(embeddings_index))
-    #     return embeddings_index
+
+    class Node:
+        def __init__():
+            self.path = []
+            self.confidence = 0
+            self.state = None
+
+
+
+    def beamSearch(self, features, states, n=3):
+        inputs = features.unsqueeze(1)
+
+        # print(inputs)
+
+        hiddens, states = self.gru(inputs, states)          # (batch_size, 1, hidden_size)
+        outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
+        confidences, best_choices = outputs.topk(3)
+        # print(best_choices)
+
+        # predicted = outputs.max(1)[1]
+
+        best_list = [None] * 9
+        best_confidence = [None] * 9
+        best_states = [None] * 9
+
+        cached_states = [states] * 3 
+
+        # print(best_states)
+
+
+        # print(best_choices)
+        # print()
+        # print()
+        for i in range(20):
+            # print(best_choices)
+            # if i != 0:
+            #     print(best_choices)
+            #     print(i)
+            #     best_choices_iter = best_choices[i]
+            # else:
+            #     best_choices_iter = best_choices[i]
+
+            # print(best_choices)
+            if i == 0:
+                best_choices = best_choices[i]
+
+            for j, choice in enumerate(best_choices):
+                if i != 0:
+                    input_choice = choice[choice.size(0) - 1]
+                else:
+                    input_choice = choice
+                   
+                inputs = self.embed(input_choice).unsqueeze(0)
+                current_confidence = confidences[:,j]
+
+                hiddens, out_states = self.gru(inputs, cached_states[j])          # (batch_size, 1, hidden_size)
+                outputs = self.linear(hiddens.squeeze(1))                         # (batch_size, vocab_size)
+                inner_confidences, inner_best_choices = outputs.topk(n)
+                for k, inner_choice in enumerate(inner_best_choices[0]):
+                    if i != 0:
+                        choice = best_choices[j]
+                    item = torch.cat((choice, inner_choice))
+                    # print(j * n + k)
+                    best_list[j * n + k]   = item
+                    best_states[j * n + k] = out_states
+                    best_confidence[j * n + k] = inner_confidences[:,k] + current_confidence
+
+
+            best_confidence_tensor = torch.cat(best_confidence, 0)
+            confidences , topk = best_confidence_tensor.topk(3)
+            confidences = confidences.unsqueeze(0)
+
+            best_choices = [ best_list[i] for i in topk.data.int().cpu().numpy() ]
+            #best_choices = torch.cat(best_choices, 0).view(3,-1)
+            cached_states = [ best_states[i] for i in topk.data.int().cpu().numpy() ]
+
+        #print(best_choices)
+        return best_choices
 
 class Fire(nn.Module):
 

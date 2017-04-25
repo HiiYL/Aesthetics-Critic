@@ -63,7 +63,7 @@ def main(args):
     #                 encoder..parameters())
     params = [
                 {'params': decoder.parameters()},
-                {'params': encoder.resnet.parameters()}
+                {'params': encoder.inception.fc.parameters()}
             ]
     optimizer = torch.optim.Adam(params, lr=args.learning_rate)
     
@@ -86,15 +86,23 @@ def main(args):
                 captions = captions.cuda()
             targets = pack_padded_sequence(captions, lengths, batch_first=True)[0]
 
+
+
             # Forward, Backward and Optimize
             decoder.zero_grad()
             encoder.zero_grad()
             features = encoder(images)
             outputs = decoder(features, captions, lengths)
-
             loss = criterion(outputs, targets)
-            loss.backward()
 
+
+            #outputs_blind = decoder.forward_blind(features, lengths)
+
+            #loss_blind = criterion(outputs_blind, targets)
+
+            #loss = loss_guided + loss_blind
+
+            loss.backward()
             #torch.nn.utils.clip_grad_norm(decoder.parameters(), args.clip)
             optimizer.step()
 
@@ -105,30 +113,30 @@ def main(args):
                         loss.data[0], np.exp(loss.data[0]))) 
             
 
-            if (i % (args.log_step * 10))  == 0:
-                print()
-                decoder.eval()
-                for param in decoder.parameters():
-                    param.require_grad=False
+            # if (i % (args.log_step * 10))  == 0:
+            #     print()
+            #     decoder.eval()
+            #     for param in decoder.parameters():
+            #         param.require_grad=False
 
-                sampled_ids = decoder.sample(features[0:2],state)
+            #     sampled_ids = decoder.sample(features[0:2],state)
 
-                decoder.train()
-                for param in decoder.parameters():
-                    param.require_grad=True
-                sampled_ids = sampled_ids.cpu().data.numpy()
+            #     decoder.train()
+            #     for param in decoder.parameters():
+            #         param.require_grad=True
+            #     sampled_ids = sampled_ids.cpu().data.numpy()
                 
-                # Decode word_ids to words
-                for sampled_id in sampled_ids:
-                    sampled_caption = []
-                    for word_id in sampled_id:
-                        word = vocab.idx2word[word_id]
-                        sampled_caption.append(word)
-                        if word == '<end>':
-                            break
-                    sentence = ' '.join(sampled_caption)
-                    print(sentence)
-                print()
+            #     # Decode word_ids to words
+            #     for sampled_id in sampled_ids:
+            #         sampled_caption = []
+            #         for word_id in sampled_id:
+            #             word = vocab.idx2word[word_id]
+            #             sampled_caption.append(word)
+            #             if word == '<end>':
+            #                 break
+            #         sentence = ' '.join(sampled_caption)
+            #         print(sentence)
+            #     print()
 
             # Save the model
             if (i+1) % args.save_step == 0:
@@ -144,7 +152,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_path', type=str, default='./models/' ,
                         help='path for saving trained models')
-    parser.add_argument('--crop_size', type=int, default=224 ,
+    parser.add_argument('--crop_size', type=int, default=299 ,
                         help='size for randomly cropping images')
     parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
                         help='path for vocabulary wrapper')
@@ -173,7 +181,7 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained', type=str)#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
-    parser.add_argument('--batch_size', type=int, default=2)
+    parser.add_argument('--batch_size', type=int, default=4)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--clip', type=float, default=0.25,help='gradient clipping')

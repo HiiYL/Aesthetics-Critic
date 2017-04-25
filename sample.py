@@ -30,8 +30,8 @@ def main(args):
     
 
     # Load the trained model parameters
-    encoder.load_state_dict(torch.load(args.encoder_path, map_location=lambda storage, loc: storage))
-    decoder.load_state_dict(torch.load(args.decoder_path, map_location=lambda storage, loc: storage))
+    encoder.load_state_dict(torch.load(args.encoder_path))
+    decoder.load_state_dict(torch.load(args.decoder_path))
 
     # Prepare Image       
     image = Image.open(args.image)
@@ -42,42 +42,44 @@ def main(args):
     #print(image_tensor)
     
     # Set initial states
-    #state = (Variable(torch.zeros(args.num_layers, 1, args.hidden_size)),
-    #         Variable(torch.zeros(args.num_layers, 1, args.hidden_size)))
+    state = (Variable(torch.zeros(args.num_layers, 1, args.hidden_size)),
+            Variable(torch.zeros(args.num_layers, 1, args.hidden_size)))
     
     # If use gpu
-    #if torch.cuda.is_available():
-    #    encoder.cuda()
-    #    decoder.cuda()
-        #state = [s.cuda() for s in state]
-    #    image_tensor = image_tensor.cuda()
+    if torch.cuda.is_available():
+       encoder.cuda()
+       decoder.cuda()
+       state = [s.cuda() for s in state]
+       image_tensor = image_tensor.cuda()
     
     # Generate caption from image
     feature = encoder(image_tensor)
 
-    sampled_ids = decoder.sample(feature)
-    sampled_ids = sampled_ids.cpu().data.numpy()
+    sampled_ids_list = decoder.beamSearch(feature, None)
+    sampled_ids_list = [ sampled_ids.cpu().data.numpy() for sampled_ids in sampled_ids_list ] 
     
     # Decode word_ids to words
-    sampled_caption = []
-    for word_id in sampled_ids:
-        word = vocab.idx2word[word_id]
-        sampled_caption.append(word)
-        if word == '<end>':
-            break
-    sentence = ' '.join(sampled_caption)
     
-    # Print out image and generated caption.
-    print (sentence)
+    for sampled_ids in sampled_ids_list:
+        sampled_caption = []
+        for word_id in sampled_ids:
+            word = vocab.idx2word[word_id]
+            sampled_caption.append(word)
+            if word == '<end>':
+                break
+        sentence = ' '.join(sampled_caption)
+        
+        # Print out image and generated caption.
+        print (sentence)
     plt.imshow(np.asarray(image))
     
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--image', type=str, required=True,
                         help='input image for generating caption')
-    parser.add_argument('--encoder_path', type=str, default='models/encoder-11-20000.pkl',
+    parser.add_argument('--encoder_path', type=str, default='models/encoder-1-20000.pkl',
                         help='path for trained encoder')
-    parser.add_argument('--decoder_path', type=str, default='models/decoder-11-20000.pkl',
+    parser.add_argument('--decoder_path', type=str, default='models/decoder-1-20000.pkl',
                         help='path for trained decoder')
     parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
                         help='path for vocabulary wrapper')
