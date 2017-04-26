@@ -48,16 +48,16 @@ class DatasetFromFolder(data.Dataset):
         ## Split by comment then randomly pick one!
         comments = self.comments[index].split(" [END] ")
         #comments.sort(key=len)
-        if(len(comments) > 1):
-            weighted_comments = [(comment, len(comment)) for comment in comments ]
-            comment = self.weighted_choice(weighted_comments)
-        else:
-            comment = comments[0]
+        # if(len(comments) > 1):
+        #     weighted_comments = [(comment, len(comment)) for comment in comments ]
+        #     comment = self.weighted_choice(weighted_comments)
+        # else:
+        comment = comments[0]
         #comment = comments[len(comments) - 1]
             
         tokens = nltk.tokenize.word_tokenize(str(comment).lower())
         caption = []
-        #caption.append(self.vocab('<start>'))
+        caption.append(self.vocab('<start>'))
         caption.extend([self.vocab(token) for token in tokens])
         caption.append(self.vocab('<end>'))
         target = torch.Tensor(caption)
@@ -128,36 +128,3 @@ def get_loader(image_dir, dataframe_dir, vocab, transform, batch_size, shuffle, 
                                               num_workers=num_workers,
                                               collate_fn=collate_fn)
     return data_loader
-    # def generateAndGetEmbedding(self):
-
-    #     # ava_table = self.store['labels_train']
-    #     # # ava_table = ava_table.ix[ava_table.score > 6.5]
-    #     ava_test = self.store['labels_test']
-    #     comments_train = self.ava_table.ix[:,'comments'].as_matrix()
-    #     comments_test = ava_test.ix[:,'comments'].as_matrix()
-
-
-    #     maxFeatures=20000
-    #     maxEmbeddingInputLength=100
-    #     embeddingDim=100
-    #     GLOVE_DIR="../"
-    #     print("Tokenizing and generating index....")
-    #     self.X_train_text, self.X_test_text, word_index = tokenizeAndGenerateIndex(
-    #         comments_train, comments_test,
-    #         maxFeatures=maxFeatures, maxLength=maxEmbeddingInputLength)
-    #     print("Done!")
-    #     print(self.X_train_text.shape)
-
-    #     print("Generating Index Mapping to Embedding...")
-
-    #     embeddings_index = generateIndexMappingToEmbedding(embeddingDim=embeddingDim)
-    #     embedding_matrix = np.zeros((len(word_index) + 1, embeddingDim))
-    #     for word, i in word_index.items():
-    #         embedding_vector = embeddings_index.get(word)
-    #         if embedding_vector is not None:
-    #             # words not found in embedding index will be all-zeros.
-    #             embedding_matrix[i] = embedding_vector
-
-    #     embeddings = torch.from_numpy(embedding_matrix)
-
-    #     return embeddings

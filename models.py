@@ -9,7 +9,6 @@ from torch.nn.utils.rnn import pack_padded_sequence,pad_packed_sequence
 import torchvision.models as models
 import os
 
-pretrained_path = "squeezenet1_1-f364aa15.pth"
 class EncoderCNN(nn.Module):
     def __init__(self, embed_size):
         """Load the pretrained ResNet-152 and replace top fc layer."""
@@ -19,7 +18,7 @@ class EncoderCNN(nn.Module):
 #            param.requires_grad = False
 #        self.resnet.fc = nn.Linear(self.resnet.fc.in_features, embed_size)
 #        self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
-        self.inception = torch.load('net_model_epoch_10.pth', map_location=lambda storage, loc: storage).inception
+        self.inception = torch.load('net_model_epoch_10.pth').inception
         self.inception.aux_logits = False
         self.inception.transform_input = False
         for parameter in self.inception.parameters():
@@ -40,10 +39,9 @@ class EncoderCNN(nn.Module):
 
 
 class InceptionNet(nn.Module):
-
     def __init__(self, num_classes=10):
         super(InceptionNet, self).__init__()
-        self.inception = models.inception_v3(pretrained=True)
+        self.inception = models.inception_v3(pretrained=False)
         self.inception.aux_logits = False
         self.inception.transform_input = False
         self.inception.fc = nn.Linear(self.inception.fc.in_features, 10)
@@ -56,43 +54,23 @@ class InceptionNet(nn.Module):
 
         return x
 
-        
 class DecoderRNN(nn.Module):
     def __init__(self, embed_size, hidden_size, vocab, num_layers):
         """Set the hyper-parameters and build the layers."""
         super(DecoderRNN, self).__init__()
         self.vocab = vocab
         vocab_size = len(vocab)
-        # self.embed = nn.Embedding(vocab_size, embed_size)
-
-        # matrix_filepath='data/embedding_matrix.npy'
-        # if not os.path.isfile(matrix_filepath):
-        #     print("generating embedding...")
-        #     embeddings_index = self.generateIndexMappingToEmbedding()
-        #     embedding_matrix = np.zeros((len(self.vocab) + 1, 300))
-        #     for word, i in vocab.word2idx.items():
-        #         embedding_vector = embeddings_index.get(word)
-        #         if embedding_vector is not None:
-        #             # words not found in embedding index will be all-zeros.
-        #             embedding_matrix[i] = embedding_vector
-        #     embedding_matrix.tofile(matrix_filepath)
-        # else:
-        #     embedding_matrix = np.fromfile(matrix_filepath)
-        #     embedding_matrix = embedding_matrix.reshape((len(self.vocab) + 1, 300))
-
-        # embeddings = torch.from_numpy(embedding_matrix).float()
 
         self.embed = nn.Embedding(len(self.vocab), embed_size)
         # self.embed.weight = nn.Parameter(embeddings)
 
-        self.gru = nn.GRU(embed_size, hidden_size, num_layers,dropout=0.3, batch_first=True)
+        self.gru = nn.GRU(embed_size, hidden_size, num_layers, batch_first=True)
         self.linear = nn.Linear(hidden_size, vocab_size)
 
 
         ## Tie weights
         self.embed.weight = self.linear.weight
-
-        self.drop = nn.Dropout(0.5)
+        self.dropout = nn.Dropout(0.5)
 
 
         self.init_weights()
@@ -100,41 +78,17 @@ class DecoderRNN(nn.Module):
     def init_weights(self):
         """Initialize weights."""
         self.embed.weight.data.uniform_(-0.1, 0.1)
-
         self.linear.weight.data.uniform_(-0.1, 0.1)
         self.linear.bias.data.fill_(0)
         
     def forward(self, features, captions, lengths):
         """Decode image feature vectors and generates captions."""
-        embeddings = self.drop(self.embed(captions))
+        embeddings = self.dropout(self.embed(captions))
         embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
         packed = pack_padded_sequence(embeddings, lengths, batch_first=True) 
         hiddens, _ = self.gru(packed)
-        outputs = self.linear(self.drop(hiddens[0]))
-        #print(lengths)
-        #outputs = pad_packed_sequence((outputs, lengths),batch_first=False)
-        #print(outputs)
+        outputs = self.linear(self.dropout(hiddens[0]))
         return outputs
-
-    def forward_blind(self, features, lengths):
-        """Samples captions for given image features (Greedy search)."""
-        sampled_ids = []
-        states = None
-        inputs = features.unsqueeze(1)
-        to_sample = []
-        for word in range(lengths[0]):
-            hiddens, states = self.gru(inputs, states)
-            outputs = self.linear(hiddens.squeeze(1))
-            predicted = outputs.max(1)
-            print(predicted)
-            exit()
-            inputs = self.embed(predicted)
-            to_sample.append(outputs)
-
-        to_sample = torch.cat(to_sample,0)
-
-        return to_sample
-
     
     def sample(self, features, states):
         """Samples captions for given image features (Greedy search)."""
@@ -150,25 +104,12 @@ class DecoderRNN(nn.Module):
         return sampled_ids.squeeze()
 
 
-    class Node:
-        def __init__():
-            self.path = []
-            self.confidence = 0
-            self.state = None
-
-
-
-    def beamSearch(self, features, states, n=4):
+    def beamSearch(self, features, states, n=5):
         inputs = features.unsqueeze(1)
-
-        # print(inputs)
 
         hiddens, states = self.gru(inputs, states)          # (batch_size, 1, hidden_size)
         outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
         confidences, best_choices = outputs.topk(n)
-        # print(best_choices)
-
-        # predicted = outputs.max(1)[1]
 
         best_list = [None] * n * n
         best_confidence = [None] * n * n
@@ -176,12 +117,12 @@ class DecoderRNN(nn.Module):
 
         cached_states = [states] * n
 
-        # end_idx = vocab.word2idx("<end>")
-
-        for i in range(20):
-            if i == 0:
-                best_choices = best_choices[i]
-
+        end_idx = self.vocab.word2idx["<end>"]
+        
+        best_choices = best_choices[0]
+        terminated_choices = []
+        terminated_confidences = []
+        for i in range(50):
             for j, choice in enumerate(best_choices):
                 if i != 0:
                     input_choice = choice[choice.size(0) - 1]
@@ -193,6 +134,8 @@ class DecoderRNN(nn.Module):
 
                 hiddens, out_states = self.gru(inputs, cached_states[j])          # (batch_size, 1, hidden_size)
                 outputs = self.linear(hiddens.squeeze(1))                         # (batch_size, vocab_size)
+
+                # pick n best nodes for each possible choice
                 inner_confidences, inner_best_choices = outputs.topk(n)
                 for k, inner_choice in enumerate(inner_best_choices[0]):
                     if i != 0:
@@ -203,111 +146,25 @@ class DecoderRNN(nn.Module):
                     best_states[j * n + k] = out_states
                     best_confidence[j * n + k] = inner_confidences[:,k] + current_confidence
 
-
             best_confidence_tensor = torch.cat(best_confidence, 0)
-            confidences , topk = best_confidence_tensor.topk(n)
-            confidences = confidences.unsqueeze(0)
+            _ , topk = best_confidence_tensor.topk(n - len(terminated_choices))
 
+            topk_index = topk.data.int().cpu().numpy()
 
-            ### 9 pick 3
-            best_choices = [ best_list[i] for i in topk.data.int().cpu().numpy() ]
+            ## Check if contains termination token ( '<end' )
+            best_choices_index = [ i for i in topk_index if end_idx not in best_list[i].data.int() ]
 
-            cached_states = [ best_states[i] for i in topk.data.int().cpu().numpy() ]
+            terminated_index   = list(set(topk_index) - set(best_choices_index))
+            terminated_choices.extend([ best_list[i] for i in terminated_index ])
+            terminated_confidences.extend([ best_confidence_tensor[i].data.cpu().numpy()[0] for i in terminated_index ])
 
-        #print(best_choices)
-        return best_choices
+            if len(best_choices_index) > 0:
+                ### pick n best choices
+                best_choices  = [ best_list[i] for i in best_choices_index ]
+                cached_states = [ best_states[i] for i in best_choices_index ]
+                confidences   = [ best_confidence_tensor[i] for i in best_choices_index ]
+                confidences   = torch.cat(confidences,0).unsqueeze(0)
+            else:
+                break
 
-class Fire(nn.Module):
-
-    def __init__(self, inplanes, squeeze_planes,
-                 expand1x1_planes, expand3x3_planes):
-        super(Fire, self).__init__()
-        self.inplanes = inplanes
-        self.squeeze = nn.Conv2d(inplanes, squeeze_planes, kernel_size=1)
-        self.squeeze_activation = nn.ELU(inplace=True)
-        self.expand1x1 = nn.Conv2d(squeeze_planes, expand1x1_planes,
-                                   kernel_size=1)
-        self.expand1x1_activation = nn.ELU(inplace=True)
-        self.expand3x3 = nn.Conv2d(squeeze_planes, expand3x3_planes,
-                                   kernel_size=3, padding=1)
-        self.expand3x3_activation = nn.ELU(inplace=True)
-
-    def forward(self, x):
-        x = self.squeeze_activation(self.squeeze(x))
-        return torch.cat([
-            self.expand1x1_activation(self.expand1x1(x)),
-            self.expand3x3_activation(self.expand3x3(x))
-        ], 1)
-
-def squeezenet1_1(pretrained=False, **kwargs):
-    model = SqueezeNet()
-    # if pretrained:
-    #     model.load_state_dict(model_zoo.load_url(model_urls['squeezenet1_1']))
-    return model
-
-class SqueezeNet(nn.Module):
-    def __init__(self):
-        super(SqueezeNet, self).__init__()
-        self.num_classes = num_classes
-            
-        self.conv1 = nn.Conv2d(3, 96, kernel_size=3, stride=2)
-        # self.relu = nn.ReLU(inplace=True)
-        self.elu = nn.ELU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, ceil_mode=True)
-
-
-        self.fire2 = Fire(96, 16, 64, 64)
-        self.fire3 = Fire(128, 16, 64, 64)
-        #nn.MaxPool2d(kernel_size=3, stride=2, ceil_mode=True),
-        self.fire4 = Fire(128, 32, 128, 128)
-        self.fire5 = Fire(256, 32, 128, 128)
-        #nn.MaxPool2d(kernel_size=3, stride=2, ceil_mode=True),
-        self.fire6 = Fire(256, 48, 192, 192)
-        self.fire7 = Fire(384, 48, 192, 192)
-        self.fire8 = Fire(384, 64, 256, 256)
-        self.fire9 = Fire(512, 64, 256, 256)
-
-
-        self.conv2 = nn.Conv2d(512, 1024, kernel_size=1)
-
-        self.dropout = nn.Dropout(p=0.5)
-
-        self.gap = nn.AdaptiveAvgPool2d((1,1))
-
-        self.linear = nn.Linear(1024, num_classes)
-
-        ##
-        # https://discuss.pytorch.org/t/kullback-leibler-divergence-loss-function-giving-negative-values/763
-        ##
-        self.softmax = nn.LogSoftmax()
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                gain = 2.0
-                if m is self.conv2:
-                    m.weight.data.normal_(0, 0.01)
-                else:
-                    fan_in = m.kernel_size[0] * m.kernel_size[1] * m.in_channels
-                    u = math.sqrt(3.0 * gain / fan_in)
-                    m.weight.data.uniform_(-u, u)
-                if m.bias is not None:
-                    m.bias.data.zero_()
-
-    def forward(self, x):
-        x = self.maxpool(self.elu(self.conv1(x)))
-        x = self.fire2(x)
-        x_s = self.fire3(x)
-
-        x = self.maxpool(self.fire4(torch.add(x, x_s)))
-        x_s = self.fire5(x)
-        x = self.fire6(torch.add(x,x_s))
-        x_s = self.fire7(x)
-
-        x = self.maxpool(self.fire8(torch.add(x,x_s)))
-        x_s = self.dropout(self.fire9(x))
-
-        x = self.elu(self.conv2(torch.add(x,x_s)))
-
-        x = self.gap(x).view(1,-1)
-        # print(x)
-        return x
+        return terminated_choices,terminated_confidences

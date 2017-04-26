@@ -23,7 +23,7 @@ def main(args):
         os.makedirs(args.model_path)
     
     # Image preprocessing
-    transform = transforms.Compose([ 
+    transform = transforms.Compose([
         transforms.RandomCrop(args.crop_size),
         transforms.RandomHorizontalFlip(), 
         transforms.ToTensor(), 
@@ -103,7 +103,7 @@ def main(args):
             #loss = loss_guided + loss_blind
 
             loss.backward()
-            #torch.nn.utils.clip_grad_norm(decoder.parameters(), args.clip)
+            torch.nn.utils.clip_grad_norm(decoder.parameters(), args.clip)
             optimizer.step()
 
             # Print log info
@@ -184,7 +184,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=4)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--learning_rate', type=float, default=0.001)
-    parser.add_argument('--clip', type=float, default=0.25,help='gradient clipping')
+    parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')
     args = parser.parse_args()
     print(args)
     main(args)
