@@ -30,8 +30,8 @@ def main(args):
     
 
     # Load the trained model parameters
-    encoder.load_state_dict(torch.load(args.encoder_path))
-    decoder.load_state_dict(torch.load(args.decoder_path))
+    encoder.load_state_dict(torch.load(args.encoder_path, map_location=lambda storage, loc: storage))
+    decoder.load_state_dict(torch.load(args.decoder_path, map_location=lambda storage, loc: storage))
 
     # Prepare Image       
     image = Image.open(args.image)

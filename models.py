@@ -19,7 +19,7 @@ class EncoderCNN(nn.Module):
 #            param.requires_grad = False
 #        self.resnet.fc = nn.Linear(self.resnet.fc.in_features, embed_size)
 #        self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
-        self.inception = torch.load('net_model_epoch_10.pth').inception
+        self.inception = torch.load('net_model_epoch_10.pth', map_location=lambda storage, loc: storage).inception
         self.inception.aux_logits = False
         self.inception.transform_input = False
         for parameter in self.inception.parameters():
@@ -158,40 +158,27 @@ class DecoderRNN(nn.Module):
 
 
 
-    def beamSearch(self, features, states, n=3):
+    def beamSearch(self, features, states, n=4):
         inputs = features.unsqueeze(1)
 
         # print(inputs)
 
         hiddens, states = self.gru(inputs, states)          # (batch_size, 1, hidden_size)
         outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
-        confidences, best_choices = outputs.topk(3)
+        confidences, best_choices = outputs.topk(n)
         # print(best_choices)
 
         # predicted = outputs.max(1)[1]
 
-        best_list = [None] * 9
-        best_confidence = [None] * 9
-        best_states = [None] * 9
+        best_list = [None] * n * n
+        best_confidence = [None] * n * n
+        best_states = [None] * n * n
 
-        cached_states = [states] * 3 
+        cached_states = [states] * n
 
-        # print(best_states)
+        # end_idx = vocab.word2idx("<end>")
 
-
-        # print(best_choices)
-        # print()
-        # print()
         for i in range(20):
-            # print(best_choices)
-            # if i != 0:
-            #     print(best_choices)
-            #     print(i)
-            #     best_choices_iter = best_choices[i]
-            # else:
-            #     best_choices_iter = best_choices[i]
-
-            # print(best_choices)
             if i == 0:
                 best_choices = best_choices[i]
 
@@ -218,11 +205,13 @@ class DecoderRNN(nn.Module):
 
 
             best_confidence_tensor = torch.cat(best_confidence, 0)
-            confidences , topk = best_confidence_tensor.topk(3)
+            confidences , topk = best_confidence_tensor.topk(n)
             confidences = confidences.unsqueeze(0)
 
+
+            ### 9 pick 3
             best_choices = [ best_list[i] for i in topk.data.int().cpu().numpy() ]
-            #best_choices = torch.cat(best_choices, 0).view(3,-1)
+
             cached_states = [ best_states[i] for i in topk.data.int().cpu().numpy() ]
 
         #print(best_choices)
