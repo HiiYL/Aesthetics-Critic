@@ -9,56 +9,6 @@ from torch.nn.utils.rnn import pack_padded_sequence,pad_packed_sequence
 import torchvision.models as models
 import os
 import torch.nn.functional as F
-
-class DecoderRNN(nn.Module):
-    def __init__(self, embed_size, hidden_size, vocab, num_layers):
-        """Set the hyper-parameters and build the layers."""
-        super(DecoderRNN, self).__init__()
-        self.vocab = vocab
-        vocab_size = len(vocab)
-
-        self.embed = nn.Embedding(len(self.vocab), embed_size)
-        # self.embed.weight = nn.Parameter(embeddings)
-
-        self.gru = nn.GRU(embed_size, hidden_size, num_layers, batch_first=True)
-        self.linear = nn.Linear(hidden_size, vocab_size)
-
-
-        ## Tie weights
-        self.embed.weight = self.linear.weight
-        self.dropout = nn.Dropout(0.5)
-
-
-        self.init_weights()
-    
-    def init_weights(self):
-        """Initialize weights."""
-        self.embed.weight.data.uniform_(-0.1, 0.1)
-        self.linear.weight.data.uniform_(-0.1, 0.1)
-        self.linear.bias.data.fill_(0)
-        
-    def forward(self, features, captions, lengths):
-        """Decode image feature vectors and generates captions."""
-        embeddings = self.dropout(self.embed(captions))
-        embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
-        packed = pack_padded_sequence(embeddings, lengths, batch_first=True) 
-        hiddens, _ = self.gru(packed)
-        outputs = self.linear(self.dropout(hiddens[0]))
-        return outputs
-    
-    def sample(self, features, states):
-        """Samples captions for given image features (Greedy search)."""
-        sampled_ids = []
-        inputs = features.unsqueeze(1)
-        for i in range(20):                                      # maximum sampling length
-            hiddens, states = self.gru(inputs, states)          # (batch_size, 1, hidden_size)
-            outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
-            predicted = outputs.max(1)[1]
-            sampled_ids.append(predicted)
-            inputs = self.embed(predicted)
-        sampled_ids = torch.cat(sampled_ids, 1)                  # (batch_size, 20)
-        return sampled_ids.squeeze()
-
 class EncoderCNN(nn.Module):
     def __init__(self, embed_size,inception):
         """Load the pretrained ResNet-152 and replace top fc layer."""
@@ -91,6 +41,17 @@ class EncoderCNN(nn.Module):
         self.fc = nn.Linear(inception.fc.in_features, embed_size)#inception.fc
 
         self.init_weights()
+
+    def set_finetune(self,finetune=False):
+        if finetune:
+            for parameters in self.parameters():
+                parameters.requires_grad = True
+        else:
+            for parameters in self.parameters():
+                parameters.requires_grad = False
+            for parameters in self.fc.parameters():
+                parameters.requires_grad = True
+
         
     def init_weights(self):
         """Initialize the weights."""
@@ -160,9 +121,8 @@ class DecoderRNN(nn.Module):
         self.embed = nn.Embedding(len(self.vocab), embed_size)
         # self.embed.weight = nn.Parameter(embeddings)
 
-        self.gru = nn.GRU(embed_size, hidden_size, num_layers, batch_first=True)
+        self.lstm = nn.LSTM(embed_size, hidden_size, num_layers,dropout=0.5, batch_first=True)
         self.linear = nn.Linear(hidden_size, vocab_size)
-
 
         ## Tie weights
         self.embed.weight = self.linear.weight
@@ -181,8 +141,9 @@ class DecoderRNN(nn.Module):
         """Decode image feature vectors and generates captions."""
         embeddings = self.dropout(self.embed(captions))
         embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
-        packed = pack_padded_sequence(embeddings, lengths, batch_first=True) 
-        hiddens, _ = self.gru(packed)
+        packed = pack_padded_sequence(embeddings, lengths, batch_first=True)
+
+        hiddens, _ = self.lstm(packed)
         outputs = self.linear(self.dropout(hiddens[0]))
         return outputs
     
@@ -203,7 +164,7 @@ class DecoderRNN(nn.Module):
     def beamSearch(self, features, states, n=5):
         inputs = features.unsqueeze(1)
 
-        hiddens, states = self.gru(inputs, states)          # (batch_size, 1, hidden_size)
+        hiddens, states = self.lstm(inputs, states)          # (batch_size, 1, hidden_size)
         outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
         confidences, best_choices = outputs.topk(n)
 
@@ -228,7 +189,7 @@ class DecoderRNN(nn.Module):
                 inputs = self.embed(input_choice).unsqueeze(0)
                 current_confidence = confidences[:,j]
 
-                hiddens, out_states = self.gru(inputs, cached_states[j])          # (batch_size, 1, hidden_size)
+                hiddens, out_states = self.lstm(inputs, cached_states[j])          # (batch_size, 1, hidden_size)
                 outputs = self.linear(hiddens.squeeze(1))                         # (batch_size, vocab_size)
 
                 # pick n best nodes for each possible choice
@@ -264,6 +225,42 @@ class DecoderRNN(nn.Module):
                 break
 
         return terminated_choices,terminated_confidences
+
+
+class ValueNetwork(nn.Module):
+    def __init__(self, embed_size, hidden_size, vocab, num_layers):
+        """Set the hyper-parameters and build the layers."""
+        super(ValueNetwork, self).__init__()
+        self.vocab = vocab
+        vocab_size = len(vocab)
+
+        self.embed = nn.Embedding(len(self.vocab), embed_size)
+        # self.embed.weight = nn.Parameter(embeddings)
+
+        self.gru = nn.GRU(embed_size, hidden_size, num_layers, batch_first=True)
+        self.linear = nn.Linear(hidden_size, vocab_size)
+
+        ## Tie weights
+        self.embed.weight = self.linear.weight
+        self.dropout = nn.Dropout(0.5)
+
+
+        self.init_weights()
+    
+    def init_weights(self):
+        """Initialize weights."""
+        self.embed.weight.data.uniform_(-0.1, 0.1)
+        self.linear.weight.data.uniform_(-0.1, 0.1)
+        self.linear.bias.data.fill_(0)
+        
+    def forward(self, features, captions, lengths):
+        """Decode image feature vectors and generates captions."""
+        embeddings = self.dropout(self.embed(captions))
+        packed = pack_padded_sequence(embeddings, lengths, batch_first=True)
+        hiddens, _ = self.gru(packed)
+        outputs = self.linear(self.dropout(hiddens[0]))
+
+        return outputs
 
 
 class InceptionNet(nn.Module):

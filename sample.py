@@ -23,22 +23,24 @@ def main(args):
         vocab = pickle.load(f)
 
     # Build Models
-    encoder = EncoderCNN(args.embed_size)
-    encoder.eval()  # evaluation mode (BN uses moving mean/variance)
+    encoder = EncoderCNN(args.embed_size, torch.load('data/net_model_epoch_10.pth').inception)
+    
     decoder = DecoderRNN(args.embed_size, args.hidden_size, 
                          vocab, args.num_layers)
-    decoder.eval()
+    
     
 
     # Load the trained model parameters
     encoder.load_state_dict(torch.load(args.encoder_path, map_location=lambda storage, loc: storage))
     decoder.load_state_dict(torch.load(args.decoder_path, map_location=lambda storage, loc: storage))
 
+
+    encoder.eval()  # evaluation mode (BN uses moving mean/variance)
+    decoder.eval()
+
     # Prepare Image       
     image = Image.open(args.image)
     image_tensor = Variable(transform(image).unsqueeze(0), volatile=True)
-
-    encoder.inception.transform_input = False
 
     #print(image_tensor)
     
@@ -85,9 +87,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--image', type=str, required=True,
                         help='input image for generating caption')
-    parser.add_argument('--encoder_path', type=str, default='models/encoder-2-10000.pkl',
+    parser.add_argument('--encoder_path', type=str, default='models/encoder-1-40000.pkl',
                         help='path for trained encoder')
-    parser.add_argument('--decoder_path', type=str, default='models/decoder-2-10000.pkl',
+    parser.add_argument('--decoder_path', type=str, default='models/decoder-1-40000.pkl',
                         help='path for trained decoder')
     parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
                         help='path for vocabulary wrapper')
@@ -99,7 +101,7 @@ if __name__ == '__main__':
                         help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int , default=512,
                         help='dimension of lstm hidden states')
-    parser.add_argument('--num_layers', type=int , default=2 ,
+    parser.add_argument('--num_layers', type=int , default=3 ,
                         help='number of layers in lstm')
     parser.add_argument('--n', type=int , default=5 ,
                         help='n of beam search')
