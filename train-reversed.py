@@ -14,7 +14,7 @@ import numpy as np
 import os
 from data_loader import get_loader 
 from build_vocab import Vocabulary
-from models import EncoderCNN, DecoderRNN,InceptionNet
+from models import InvertedCNN, InvertedRNN 
 import pickle
 
 def main(args):
@@ -39,9 +39,8 @@ def main(args):
                              shuffle=True, num_workers=args.num_workers) 
 
     # Build the models
-    encoder = EncoderCNN(args.embed_size, torch.load('net_model_epoch_10.pth').inception)
-
-    decoder = DecoderRNN(args.embed_size, args.hidden_size, 
+    encoder = InvertedCNN(args.embed_size)
+    decoder = InvertedRNN(args.embed_size, args.hidden_size, 
                              vocab, args.num_layers)
 
     if args.pretrained:
@@ -57,14 +56,13 @@ def main(args):
         state = [s.cuda() for s in state]
 
     # Loss and Optimizer
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.L1Loss()
 
     #fc_params = list(map(id, encoder.inception.fc.parameters()))
     #base_params = filter(lambda p: id(p) not in ignored_params,
     #                 encoder..parameters())
     params = [
-                {'params': decoder.parameters()},
-                {'params': encoder.parameters()}
+                {'params': decoder.parameters()}
             ]
     optimizer = torch.optim.Adam(params, lr=args.learning_rate)
     
@@ -85,15 +83,16 @@ def main(args):
             if torch.cuda.is_available():
                 images = images.cuda()
                 captions = captions.cuda()
-            targets = pack_padded_sequence(captions, lengths, batch_first=True)[0]
-
-
 
             # Forward, Backward and Optimize
             decoder.zero_grad()
             encoder.zero_grad()
-            features = encoder(images)
-            outputs = decoder(features, captions, lengths)
+            targets = encoder(images)
+
+            #captions = torch.cat((features.unsqueeze(1), captions), 1)
+
+            outputs = decoder(captions, lengths)
+
             loss = criterion(outputs, targets)
 
 
