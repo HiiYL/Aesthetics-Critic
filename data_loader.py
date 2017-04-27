@@ -7,7 +7,6 @@ import os
 import torch.utils.data as data
 import nltk
 
-from util import is_image_file, load_img
 from pandas import HDFStore
 import numpy as np
 import torch
@@ -23,14 +22,8 @@ class DatasetFromFolder(data.Dataset):
         print("[!] Loading {} set... ".format(image_dir))
         ava_table = self.store['labels_train']
         self.a_path = join(image_dir, "a")
-
-        filenames = [ "{}.jpg".format(x) for x in ava_table.index ]
-        self.image_filenames = [ x for x in filenames if is_image_file(x) ]
-
-        if(len(self.image_filenames) != len(filenames)):
-            print("[!] Missing Files!!")
-        else:
-            print("  [~] {} images found".format(len(self.image_filenames)))
+        
+        self.image_filenames = [ "{}.jpg".format(x) for x in ava_table.index ]
 
         self.vocab = vocab
         self.transform = transform

@@ -39,7 +39,7 @@ def main(args):
                              shuffle=True, num_workers=args.num_workers) 
 
     # Build the models
-    encoder = EncoderCNN(args.embed_size, torch.load('net_model_epoch_10.pth').inception)
+    encoder = EncoderCNN(args.embed_size, torch.load('data/net_model_epoch_10.pth').inception)
 
     decoder = DecoderRNN(args.embed_size, args.hidden_size, 
                              vocab, args.num_layers)
@@ -96,13 +96,6 @@ def main(args):
             outputs = decoder(features, captions, lengths)
             loss = criterion(outputs, targets)
 
-
-            #outputs_blind = decoder.forward_blind(features, lengths)
-
-            #loss_blind = criterion(outputs_blind, targets)
-
-            #loss = loss_guided + loss_blind
-
             loss.backward()
             torch.nn.utils.clip_grad_norm(decoder.parameters(), args.clip)
             optimizer.step()
@@ -112,32 +105,6 @@ def main(args):
                 print('Epoch [%d/%d], Step [%d/%d], Loss: %.4f, Perplexity: %5.4f'
                       %(epoch, args.num_epochs, i, total_step, 
                         loss.data[0], np.exp(loss.data[0]))) 
-            
-
-            # if (i % (args.log_step * 10))  == 0:
-            #     print()
-            #     decoder.eval()
-            #     for param in decoder.parameters():
-            #         param.require_grad=False
-
-            #     sampled_ids = decoder.sample(features[0:2],state)
-
-            #     decoder.train()
-            #     for param in decoder.parameters():
-            #         param.require_grad=True
-            #     sampled_ids = sampled_ids.cpu().data.numpy()
-                
-            #     # Decode word_ids to words
-            #     for sampled_id in sampled_ids:
-            #         sampled_caption = []
-            #         for word_id in sampled_id:
-            #             word = vocab.idx2word[word_id]
-            #             sampled_caption.append(word)
-            #             if word == '<end>':
-            #                 break
-            #         sentence = ' '.join(sampled_caption)
-            #         print(sentence)
-            #     print()
 
             # Save the model
             if (i+1) % args.save_step == 0:
