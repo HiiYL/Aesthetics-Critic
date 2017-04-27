@@ -97,7 +97,7 @@ def main(args):
             loss = criterion(outputs, targets)
 
             loss.backward()
-            torch.nn.utils.clip_grad_norm(decoder.parameters(), args.clip)
+            #torch.nn.utils.clip_grad_norm(decoder.parameters(), args.clip)
             optimizer.step()
 
             # Print log info
