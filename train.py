@@ -16,8 +16,11 @@ from data_loader import get_loader
 from build_vocab import Vocabulary
 from models import EncoderCNN, DecoderRNN,InceptionNet
 import pickle
+import datetime
 
-def main(args):
+from tensorboard_logger import configure, log_value
+
+def train(save_path, args):
     # Create model directory
     if not os.path.exists(args.model_path):
         os.makedirs(args.model_path)
@@ -33,8 +36,10 @@ def main(args):
     with open(args.vocab_path, 'rb') as f:
         vocab = pickle.load(f)
     
+
+    training_location = "data/{}/train".format(args.dataset)
     # Build data loader
-    data_loader = get_loader(args.image_dir, args.comments_path, vocab, 
+    data_loader = get_loader(training_location, args.comments_path, vocab, 
                              transform, args.batch_size,
                              shuffle=True, num_workers=args.num_workers) 
 
@@ -72,6 +77,8 @@ def main(args):
     # Train the Models
     total_step = len(data_loader)
 
+    total_iterations = 0
+
     for epoch in range(args.num_epochs):
         if epoch % 8 == 0:
             lr = args.learning_rate * (0.5 ** (epoch // 8))
@@ -102,20 +109,28 @@ def main(args):
             optimizer.step()
 
             # Print log info
-            if i % args.log_step == 0:
+            if total_iterations % args.log_step == 0:
                 print('Epoch [%d/%d], Step [%d/%d], Loss: %.4f, Perplexity: %5.4f'
                       %(epoch, args.num_epochs, i, total_step, 
                         loss.data[0], np.exp(loss.data[0]))) 
 
             # Save the model
-            if (i+1) % args.save_step == 0:
+            if (total_iterations+1) % args.save_step == 0:
                 torch.save(decoder.state_dict(), 
-                           os.path.join(args.model_path, 
+                           os.path.join(save_path, 
                                         'decoder-%d-%d.pkl' %(epoch+1, i+1)))
                 torch.save(encoder.state_dict(), 
-                           os.path.join(args.model_path, 
+                           os.path.join(save_path, 
                                         'encoder-%d-%d.pkl' %(epoch+1, i+1)))
-            #gc.collect()
+
+
+            if total_iterations % args.tb_log_step == 0:
+                log_value('Loss', loss.data[0], total_iterations)
+                log_value('Perplexity', np.exp(loss.data[0]), total_iterations)
+
+            total_iterations += 1
+
+
                 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -125,10 +140,10 @@ if __name__ == '__main__':
                         help='size for randomly cropping images')
     parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
                         help='path for vocabulary wrapper')
-    parser.add_argument('--image_dir', type=str, default='data/aesthetics/train' ,
-                        help='directory for resized images')
+    parser.add_argument('--dataset', type=str, default='aesthetics' ,
+                        help='dataset to use')
     parser.add_argument('--comments_path', type=str,
-                        default='labels.h5',
+                        default='data/labels.h5',
                         help='path for train annotation json file')
     # parser.add_argument('--image_dir', type=str, default='./data/resized2014' ,
     #                     help='directory for resized images')
@@ -136,6 +151,8 @@ if __name__ == '__main__':
     #                     default='./data/annotations/captions_train2014.json',
     #                     help='path for train annotation json file')
     parser.add_argument('--log_step', type=int , default=10,
+                        help='step size for prining log info')
+    parser.add_argument('--tb_log_step', type=int , default=10,
                         help='step size for prining log info')
     parser.add_argument('--save_step', type=int , default=10000,
                         help='step size for saving trained models')
@@ -156,4 +173,18 @@ if __name__ == '__main__':
     parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')
     args = parser.parse_args()
     print(args)
-    main(args)
+
+    if not os.path.exists("logs"):
+        os.mkdir("logs")
+
+    if not os.path.exists(os.path.join("logs", args.dataset)):
+        os.mkdir(os.path.join("logs", args.dataset))
+
+    now = datetime.datetime.now().strftime('%d%m%Y%H%M%S')
+    save_path = os.path.join(os.path.join("logs", args.dataset), now)
+
+    if not os.path.exists(save_path):
+        os.mkdir(save_path)
+
+    configure(save_path)
+    train(save_path, args)

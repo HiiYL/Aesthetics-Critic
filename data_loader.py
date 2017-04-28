@@ -27,7 +27,7 @@ class DatasetFromFolder(data.Dataset):
 
         self.vocab = vocab
         self.transform = transform
-        self.comments = ava_table.comments.as_matrix()
+        # self.comments = ava_table.comments.as_matrix()
 
     def __getitem__(self, index):
         # Load Image
