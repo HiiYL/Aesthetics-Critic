@@ -168,9 +168,7 @@ class DecoderRNN(nn.Module):
         outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
         confidences, best_choices = outputs.topk(n)
 
-        best_list = [None] * n * n
-        best_confidence = [None] * n * n
-        best_states = [None] * n * n
+
 
         cached_states = [states] * n
 
@@ -179,47 +177,59 @@ class DecoderRNN(nn.Module):
         best_choices = best_choices[0]
         terminated_choices = []
         terminated_confidences = []
-        for i in range(50):
-            for j, choice in enumerate(best_choices):
-                if i != 0:
-                    input_choice = choice[choice.size(0) - 1]
-                else:
-                    input_choice = choice
+
+        # one loop for each word
+        for word_index in range(50):
+
+            best_list = [None] * n * (n - len(terminated_choices))
+            best_confidence = [None] * n * (n - len(terminated_choices))
+            best_states = [None] * n * (n - len(terminated_choices))
+
+            # for each choice
+            for choice_index, choice in enumerate(best_choices):
+
+                input_choice = choice[word_index] if word_index != 0 else choice
                    
                 inputs = self.embed(input_choice).unsqueeze(0)
-                current_confidence = confidences[:,j]
+                current_confidence = confidences[:,choice_index]
 
-                hiddens, out_states = self.lstm(inputs, cached_states[j])          # (batch_size, 1, hidden_size)
-                outputs = self.linear(hiddens.squeeze(1))                         # (batch_size, vocab_size)
+                hiddens, out_states = self.lstm(inputs, cached_states[choice_index])        # (batch_size, 1, hidden_size)
+                outputs = self.linear(hiddens.squeeze(1))                                   # (batch_size, vocab_size)
 
                 # pick n best nodes for each possible choice
                 inner_confidences, inner_best_choices = outputs.topk(n)
-                for k, inner_choice in enumerate(inner_best_choices[0]):
-                    if i != 0:
-                        choice = best_choices[j]
+
+                inner_confidences = inner_confidences[0]
+                for inner_choice_idx, inner_choice in enumerate(inner_best_choices[0]):
+                    if word_index != 0:
+                        choice = best_choices[choice_index]
                     item = torch.cat((choice, inner_choice))
-                    # print(j * n + k)
-                    best_list[j * n + k]   = item
-                    best_states[j * n + k] = out_states
-                    best_confidence[j * n + k] = inner_confidences[:,k] + current_confidence
+
+                    position = choice_index * n + inner_choice_idx
+
+                    best_list[position]   = item
+                    best_states[position] = out_states
+                    best_confidence[position] = inner_confidences[inner_choice_idx] + current_confidence
+
 
             best_confidence_tensor = torch.cat(best_confidence, 0)
             _ , topk = best_confidence_tensor.topk(n - len(terminated_choices))
 
             topk_index = topk.data.int().cpu().numpy()
 
-            ## Check if contains termination token ( '<end' )
-            best_choices_index = [ i for i in topk_index if end_idx not in best_list[i].data.int() ]
+            ## Filter nodes that contains termination token '<end>'
+            best_choices_index = [ index for index in topk_index if end_idx not in best_list[index].data.int() ]
 
             terminated_index   = list(set(topk_index) - set(best_choices_index))
-            terminated_choices.extend([ best_list[i] for i in terminated_index ])
-            terminated_confidences.extend([ best_confidence_tensor[i].data.cpu().numpy()[0] for i in terminated_index ])
+            terminated_choices.extend([ best_list[index] for index in terminated_index ])
+            terminated_confidences.extend([ best_confidence_tensor[index].data.cpu().numpy()[0] for index in terminated_index ])
 
+
+            ## If there is still nodes to evaluate
             if len(best_choices_index) > 0:
-                ### pick n best choices
-                best_choices  = [ best_list[i] for i in best_choices_index ]
-                cached_states = [ best_states[i] for i in best_choices_index ]
-                confidences   = [ best_confidence_tensor[i] for i in best_choices_index ]
+                best_choices  = [ best_list[index] for index in best_choices_index ]
+                cached_states = [ best_states[index] for index in best_choices_index ]
+                confidences   = [ best_confidence_tensor[index] for index in best_choices_index ]
                 confidences   = torch.cat(confidences,0).unsqueeze(0)
             else:
                 break
