@@ -63,8 +63,8 @@ def train(save_path, args):
     criterion_bce = nn.BCELoss()
     
 
-    state = (Variable(torch.zeros(args.num_layers, 2, args.hidden_size)),
-     Variable(torch.zeros(args.num_layers, 2, args.hidden_size)))
+    state = (Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)),
+     Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)))
 
     if torch.cuda.is_available():
         netG.cuda()
@@ -118,17 +118,19 @@ def train(save_path, args):
             netG.zero_grad()
             netD.zero_grad()
             features = encoder(images).detach()
-            out, captions_fake = netG(features, captions, lengths)
+            out, hidden = netG(features, captions, lengths,)
+            hidden_free = netG.forward_free(features, captions, lengths, state)
+            
 
             #print("real...")
-            output = netD(features, captions, lengths)
+            output = netD(hidden.detach(), lengths)
             label.data.resize_(output.size()).fill_(real_label)
             D_loss_real = criterion_bce(output, label)
             D_loss_real.backward()
-            
+
 
             #print("fake...")
-            output = netD(features, captions_fake.detach(), lengths)
+            output = netD(hidden_free.detach(), lengths)
             label.data.resize_(output.size()).fill_(fake_label)
             D_loss_fake = criterion_bce(output, label)
             D_loss_fake.backward()
@@ -142,10 +144,11 @@ def train(save_path, args):
                 p.requires_grad = False # to avoid computation
             netG.zero_grad()
 
-            # output = netD(features, captions_fake, lengths)
-            # label.data.resize_(output.size()).fill_(real_label)
+            output = netD(hidden_free, lengths)
+            label.data.resize_(output.size()).fill_(real_label)
             # G_loss = criterion_bce(output, label)
-            G_loss = criterion(out, targets)
+            G_loss = criterion(out, targets) + criterion_bce(output, label)
+            #G_loss_hidden = 
             G_loss.backward()
             optimizerG.step()
 
@@ -184,7 +187,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', type=str, default='aesthetics' ,
                         help='dataset to use')
     parser.add_argument('--comments_path', type=str,
-                        default='labels.h5',
+                        default='data/labels.h5',
                         help='path for train annotation json file')
     # parser.add_argument('--image_dir', type=str, default='./data/resized2014' ,
     #                     help='directory for resized images')
@@ -203,12 +206,12 @@ if __name__ == '__main__':
                         help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int , default=512 ,
                         help='dimension of lstm hidden states')
-    parser.add_argument('--num_layers', type=int , default=3 ,
+    parser.add_argument('--num_layers', type=int , default=1 ,
                         help='number of layers in lstm')
     parser.add_argument('--pretrained', type=str)#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
-    parser.add_argument('--batch_size', type=int, default=2)
+    parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')

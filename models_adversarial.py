@@ -141,10 +141,64 @@ class G(nn.Module):
 
         outputs = self.linear(self.dropout(hiddens))
 
-        outputs_padded = pad_packed_sequence([outputs, batch_sizes], batch_first=True)
+        #outputs_padded = pad_packed_sequence([outputs, batch_sizes], batch_first=True)[0]
+        hiddens = pad_packed_sequence([hiddens, batch_sizes], batch_first=True)[0]
+
+        #print("hidden")
+        #print(hiddens)
+        #print("outputs")
+        #print(outputs)
+        #print()
+        # exit()
+
+        return outputs, hiddens#, outputs_padded #torch.max(outputs_padded[0],2)[1].squeeze()
+
+    def forward_free(self, features, captions, lengths, states):
+        features = self.fc(features)
+        # print(embeddings)
+
+        inputs = features.unsqueeze(1)
+        #print(states)
+
+        #states = None
+        #output = []
+        hidden_states = torch.FloatTensor(2,lengths[0],512)
+
+        for i in range(lengths[0]):
+            hiddens, states = self.lstm(inputs, states)
+            outputs = self.linear(self.dropout(hiddens.squeeze(1)))
+            predicted = outputs.max(1)[1]
+            inputs = self.embed(predicted)
+
+            #output.append(outputs.unsqueeze(1))
+            hidden_states = hiddens
+
+            # if output is None:
+            #     output = outputs.unsqueeze(1)
+            #     hidden_states = hiddens
+            # else:
+            #     outputs = torch.cat(outputs.unsqueeze(1), 1)
+            #     hidden_states = torch.cat(hiddens, 1)
+
+        # print(states)
+        # states.data.fill_(0)
+        # print(states)
+        # exit()
+        
+        #output = torch.cat(output, 1)
+        #hidden_states = torch.cat(hidden_states,1)
+        #print(hidden_states)
+        #print(output)
+        #hidden_states = pack_padded_sequence(torch.cat(hidden_states,1), lengths, batch_first=True)
+        #output = pack_padded_sequence(torch.cat(output,1), lengths, batch_first=True)
+
+        #print(output)
+        #print(hidden_states)
+
+        return hidden_states #output, 
+        #exit()
 
 
-        return outputs, torch.max(outputs_padded[0],2)[1].squeeze()
 
     def sample(self, features, states):
         """Samples captions for given image features (Greedy search)."""
@@ -242,13 +296,16 @@ class D(nn.Module):
         self.vocab = vocab
         vocab_size = len(vocab)
 
-        self.embed = nn.Embedding(len(self.vocab), embed_size)
+        # self.embed = nn.Embedding(len(self.vocab), embed_size)
+
+        #self.linear2 = nn.Linear(len(self.vocab), 512)
         # self.embed.weight = nn.Parameter(embeddings)
 
-        self.lstm = nn.LSTM(embed_size, hidden_size, num_layers,dropout=0.5, batch_first=True, bidirectional=True)
+        self.gru = nn.GRU(embed_size, hidden_size, num_layers,dropout=0.5, batch_first=True, bidirectional=True)
+        #self.gru2 = nn.GRU(len(self.vocab), hidden_size, num_layers,dropout=0.5, batch_first=True, bidirectional=True)
         self.linear = nn.Linear(hidden_size + hidden_size, 1)
 
-        self.fc = nn.Linear(2048, embed_size)
+        #self.fc = nn.Linear(2048, embed_size)
 
         ## Tie weights
         self.dropout = nn.Dropout(0.5)
@@ -259,27 +316,36 @@ class D(nn.Module):
     
     def init_weights(self):
         """Initialize weights."""
-        self.embed.weight.data.uniform_(-0.1, 0.1)
+        #self.embed.weight.data.uniform_(-0.1, 0.1)
         self.linear.weight.data.uniform_(-0.1, 0.1)
         self.linear.bias.data.fill_(0)
         
-    def forward(self, features, captions, lengths):
+    def forward(self, hidden, lengths):
         """Decode image feature vectors and generates captions."""
-        features = self.fc(features)
+        #features = self.fc(features)
         # print(captions)
         # print(features)
         # print(captions)
+
+        ## out    - n_tokens x len(vocab)
+        ## hidden - n_token x 512
         
 
-        embeddings = self.dropout(self.embed(captions))
-        embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
-        packed = pack_padded_sequence(embeddings, lengths, batch_first=True)
+        #embeddings = self.dropout(self.embed(captions))
+        #embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
+        #packed = pack_padded_sequence(embeddings, lengths, batch_first=True)
+        #print(out)
+        #out = self.linear2(out)
 
-        hiddens, _ = self.lstm(packed)
+        #print(out)
+        #print(hidden)
+        #print(hidden)
+        hidden = pack_padded_sequence(hidden, lengths, batch_first=True )
+        hiddens, _ = self.gru(hidden)
 
+        #hiddens, batch_sizes = hiddens
 
         hiddens = pad_packed_sequence(hiddens, batch_first=True)[0]
-        # print(hiddens)
 
         outputs = self.linear(self.dropout(hiddens[:, -1, :]))
 
