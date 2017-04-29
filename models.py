@@ -9,6 +9,7 @@ from torch.nn.utils.rnn import pack_padded_sequence,pad_packed_sequence
 import torchvision.models as models
 import os
 import torch.nn.functional as F
+import random
 class EncoderCNN(nn.Module):
     def __init__(self, embed_size,inception):
         """Load the pretrained ResNet-152 and replace top fc layer."""
@@ -116,19 +117,17 @@ class DecoderRNN(nn.Module):
         """Set the hyper-parameters and build the layers."""
         super(DecoderRNN, self).__init__()
         self.vocab = vocab
-        vocab_size = len(vocab)
+        self.vocab_size = len(vocab)
 
-        self.embed = nn.Embedding(len(self.vocab), embed_size)
+        self.embed = nn.Embedding(self.vocab_size, embed_size)
         # self.embed.weight = nn.Parameter(embeddings)
 
-        self.lstm = nn.LSTM(embed_size, hidden_size, num_layers,dropout=0.5, batch_first=True)
-        self.linear = nn.Linear(hidden_size, vocab_size)
+        self.lstm = nn.LSTM(embed_size, hidden_size, num_layers,dropout=0.5, batch_first=True, bidirectional=False)
+        self.linear = nn.Linear(hidden_size, self.vocab_size)
 
         ## Tie weights
-        self.embed.weight = self.linear.weight
+        #self.embed.weight = self.linear.weight
         self.dropout = nn.Dropout(0.5)
-
-
         self.init_weights()
     
     def init_weights(self):
@@ -137,28 +136,85 @@ class DecoderRNN(nn.Module):
         self.linear.weight.data.uniform_(-0.1, 0.1)
         self.linear.bias.data.fill_(0)
         
-    def forward(self, features, captions, lengths):
+    def forward(self, features, captions, lengths, state):
         """Decode image feature vectors and generates captions."""
+        if random.random() > 0.5:
+            return self.forward_forced(features, captions, lengths, state)
+        else:
+            return self.forward_free(features, captions, lengths, state)
+
+    def forward_forced(self,features, captions, lengths, state):
         embeddings = self.dropout(self.embed(captions))
         embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
         packed = pack_padded_sequence(embeddings, lengths, batch_first=True)
 
         hiddens, _ = self.lstm(packed)
         outputs = self.linear(self.dropout(hiddens[0]))
+
         return outputs
+
+    def forward_free(self, features, captions, lengths, states):
+        #hiddens = torch.FloatTensor(2,lengths[0],512)
+        # output_list = []
+        output_tensor = Variable(torch.cuda.FloatTensor(1, lengths[0], 43892))
+        inputs = features.unsqueeze(1)
+        for i in range(lengths[0]):
+            #inputs = embeddings[:,i,:].unsqueeze(1)
+            hiddens, states = self.lstm(inputs, states)
+            output = self.linear(self.dropout(hiddens.squeeze(1)))
+            inputs = self.embed(output.max(1)[1])
+            output_tensor[:,i,:] = output.unsqueeze(1)
+            
+        output_packed = pack_padded_sequence(output_tensor, lengths, batch_first=True)
+
+        return output_packed[0] 
+
+    # def forward_free(self, features, captions, lengths, states):
+    #     #hiddens = torch.FloatTensor(2,lengths[0],512)
+    #     hiddens_list = []
+
+    #     inputs = features.unsqueeze(1)
+    #     for i in range(lengths[0]):
+    #         #inputs = embeddings[:,i,:].unsqueeze(1)
+    #         hiddens, states = self.lstm(inputs, states)
+    #         hiddens_list.append(hiddens)
+    #         inputs = hiddens
+    #         #hiddens[:,i,:] = hiddens.squeeze()
+            
+    #         #predicted = outputs.max(1)[1]
+    #         #embeddings = self.embed(predicted)
+
+    #     hiddens_list = torch.cat(hiddens_list, 1)
+    #     hidden_packed = pack_padded_sequence(hiddens_list, lengths, batch_first=True)
+
+    #     #packed = pack_padded_sequence(embeddings, lengths, batch_first=True)
+    #     #hiddens, _ = self.lstm(packed)
+    #     #print(hiddens)
+
+    #     outputs = self.linear(self.dropout(hidden_packed[0]))
+
+    #     return outputs 
     
     def sample(self, features, states):
         """Samples captions for given image features (Greedy search)."""
-        sampled_ids = []
+        # sampled_ids = []
+        hiddens_list = []
         inputs = features.unsqueeze(1)
         for i in range(20):                                      # maximum sampling length
-            hiddens, states = self.gru(inputs, states)          # (batch_size, 1, hidden_size)
-            outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
-            predicted = outputs.max(1)[1]
-            sampled_ids.append(predicted)
-            inputs = self.embed(predicted)
-        sampled_ids = torch.cat(sampled_ids, 1)                  # (batch_size, 20)
-        return sampled_ids.squeeze()
+            hiddens, states = self.lstm(inputs, states)          # (batch_size, 1, hidden_size)
+            # outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
+            hiddens_list.append(hiddens)
+            # predicted = outputs.max(1)[1]
+            # sampled_ids.append(predicted)
+            inputs = hiddens
+            #inputs = self.embed(predicted)
+        # sampled_ids = torch.cat(sampled_ids, 1)                  # (batch_size, 20)
+        hiddens_list = torch.cat(hiddens_list, 1)
+
+        outputs = self.linear(self.dropout(hiddens_list[0]))
+        # print(torch.max(outputs,1)[1])
+        # exit()
+        return torch.max(outputs,1)[1].squeeze()   #sampled_ids.squeeze()
 
 
     def beamSearch(self, features, states, n=5):
@@ -180,6 +236,7 @@ class DecoderRNN(nn.Module):
 
         # one loop for each word
         for word_index in range(50):
+            #print(best_choices)
 
             best_list = [None] * n * (n - len(terminated_choices))
             best_confidence = [None] * n * (n - len(terminated_choices))
@@ -234,6 +291,10 @@ class DecoderRNN(nn.Module):
             else:
                 break
 
+        #print(best_choices)
+        if len(best_choices_index) > 0:
+            terminated_choices.extend([ best_list[index] for index in best_choices_index ])
+            terminated_confidences.extend([ best_confidence_tensor[index].data.cpu().numpy()[0] for index in best_choices_index ])
         return terminated_choices,terminated_confidences
 
 

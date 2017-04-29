@@ -104,7 +104,7 @@ class G(nn.Module):
         self.vocab = vocab
         vocab_size = len(vocab)
 
-        self.embed = nn.Embedding(len(self.vocab), embed_size)
+        self.embed = nn.Embedding(vocab_size, embed_size)
         # self.embed.weight = nn.Parameter(embeddings)
 
         self.lstm = nn.LSTM(embed_size, hidden_size, num_layers,dropout=0.5, batch_first=True)
@@ -144,24 +144,13 @@ class G(nn.Module):
         #outputs_padded = pad_packed_sequence([outputs, batch_sizes], batch_first=True)[0]
         hiddens = pad_packed_sequence([hiddens, batch_sizes], batch_first=True)[0]
 
-        #print("hidden")
-        #print(hiddens)
-        #print("outputs")
-        #print(outputs)
-        #print()
-        # exit()
-
         return outputs, hiddens#, outputs_padded #torch.max(outputs_padded[0],2)[1].squeeze()
 
     def forward_free(self, features, captions, lengths, states):
         features = self.fc(features)
-        # print(embeddings)
 
         inputs = features.unsqueeze(1)
-        #print(states)
 
-        #states = None
-        #output = []
         hidden_states = torch.FloatTensor(2,lengths[0],512)
 
         for i in range(lengths[0]):
@@ -170,33 +159,9 @@ class G(nn.Module):
             predicted = outputs.max(1)[1]
             inputs = self.embed(predicted)
 
-            #output.append(outputs.unsqueeze(1))
             hidden_states = hiddens
 
-            # if output is None:
-            #     output = outputs.unsqueeze(1)
-            #     hidden_states = hiddens
-            # else:
-            #     outputs = torch.cat(outputs.unsqueeze(1), 1)
-            #     hidden_states = torch.cat(hiddens, 1)
-
-        # print(states)
-        # states.data.fill_(0)
-        # print(states)
-        # exit()
-        
-        #output = torch.cat(output, 1)
-        #hidden_states = torch.cat(hidden_states,1)
-        #print(hidden_states)
-        #print(output)
-        #hidden_states = pack_padded_sequence(torch.cat(hidden_states,1), lengths, batch_first=True)
-        #output = pack_padded_sequence(torch.cat(output,1), lengths, batch_first=True)
-
-        #print(output)
-        #print(hidden_states)
-
-        return hidden_states #output, 
-        #exit()
+        return hidden_states 
 
 
 
@@ -293,23 +258,11 @@ class D(nn.Module):
     def __init__(self, embed_size, hidden_size, vocab, num_layers):
         """Set the hyper-parameters and build the layers."""
         super(D, self).__init__()
-        self.vocab = vocab
-        vocab_size = len(vocab)
-
-        # self.embed = nn.Embedding(len(self.vocab), embed_size)
-
-        #self.linear2 = nn.Linear(len(self.vocab), 512)
-        # self.embed.weight = nn.Parameter(embeddings)
 
         self.gru = nn.GRU(embed_size, hidden_size, num_layers,dropout=0.5, batch_first=True, bidirectional=True)
-        #self.gru2 = nn.GRU(len(self.vocab), hidden_size, num_layers,dropout=0.5, batch_first=True, bidirectional=True)
         self.linear = nn.Linear(hidden_size + hidden_size, 1)
 
-        #self.fc = nn.Linear(2048, embed_size)
-
-        ## Tie weights
         self.dropout = nn.Dropout(0.5)
-
         self.sigmoid = nn.Sigmoid()
 
         self.init_weights()

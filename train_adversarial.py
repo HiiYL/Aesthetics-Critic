@@ -73,16 +73,7 @@ def train(save_path, args):
         label = label.cuda()
         criterion_bce = criterion_bce.cuda()
 
-
-
     label = Variable(label)
-
-    # Loss and Optimizer
-
-
-    #fc_params = list(map(id, encoder.inception.fc.parameters()))
-    #base_params = filter(lambda p: id(p) not in ignored_params,
-    #                 encoder..parameters())
 
     optimizerG = torch.optim.Adam(netG.parameters(), lr=args.learning_rate)
     optimizerD = torch.optim.Adam(netD.parameters(), lr=args.learning_rate)
@@ -136,19 +127,15 @@ def train(save_path, args):
             D_loss_fake.backward()
 
             D_loss = D_loss_real + D_loss_fake
-            
-            #torch.nn.utils.clip_grad_norm(decoder.parameters(), args.clip)
             optimizerD.step()
+
 
             for p in netD.parameters():
                 p.requires_grad = False # to avoid computation
             netG.zero_grad()
-
             output = netD(hidden_free, lengths)
             label.data.resize_(output.size()).fill_(real_label)
-            # G_loss = criterion_bce(output, label)
             G_loss = criterion(out, targets) + criterion_bce(output, label)
-            #G_loss_hidden = 
             G_loss.backward()
             optimizerG.step()
 

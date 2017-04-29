@@ -15,6 +15,7 @@ import pandas as pd
 from PIL import Image
 import random
 from bisect import bisect
+import pickle
 class DatasetFromFolder(data.Dataset):
     def __init__(self, image_dir,dataframe_dir,vocab, transform=None):
         super(DatasetFromFolder, self).__init__()
@@ -22,7 +23,10 @@ class DatasetFromFolder(data.Dataset):
         print("[!] Loading {} set... ".format(image_dir))
         ava_table = self.store['labels_train']
         self.a_path = join(image_dir, "a")
-        
+        with open('data/valid_comments.pkl', 'rb') as f:
+            self.valid_comments = pickle.load(f)
+        valid_idx = [ valid[0] for valid in self.valid_comments ]
+        ava_table = ava_table.iloc[valid_idx]
         self.image_filenames = [ "{}.jpg".format(x) for x in ava_table.index ]
 
         self.vocab = vocab
@@ -40,12 +44,13 @@ class DatasetFromFolder(data.Dataset):
         
         ## Split by comment then randomly pick one!
         comments = self.comments[index].split(" [END] ")
-        comments.sort(key=len)
+        comment = comments[self.valid_comments[index][1]]
+        #comments.sort(key=len)
         # if(len(comments) > 1):
         #     weighted_comments = [(comment, len(comment)) for comment in comments ]
         #     comment = self.weighted_choice(weighted_comments)
         # else:
-        comment = comments[0]
+        #comment = comments[0]
         #comment = comments[len(comments) - 1]
             
         tokens = nltk.tokenize.word_tokenize(str(comment).lower())

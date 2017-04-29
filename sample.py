@@ -35,8 +35,8 @@ def main(args):
     decoder.load_state_dict(torch.load(args.decoder_path, map_location=lambda storage, loc: storage))
 
 
-    # encoder.eval()  # evaluation mode (BN uses moving mean/variance)
-    # decoder.eval()
+    encoder.eval()  # evaluation mode (BN uses moving mean/variance)
+    decoder.eval()
 
     # Prepare Image       
     image = Image.open(args.image)
@@ -58,38 +58,53 @@ def main(args):
     # Generate caption from image
     feature = encoder(image_tensor)
 
-    sampled_ids_list, terminated_confidences = decoder.beamSearch(feature, None, n = args.n)
-    sampled_ids_list = np.array([ sampled_ids.cpu().data.numpy() for sampled_ids in sampled_ids_list ])
 
-    # sampled_ids_list = [x for (y,x) in sorted(zip(terminated_confidences,sampled_ids_list),reverse=True)]
+    sampled_ids = decoder.sample(feature, state)
+    sampled_ids = sampled_ids.cpu().data.numpy()
     
     # Decode word_ids to words
-    sorted_idx = np.argsort(terminated_confidences)
+    sampled_caption = []
+    for word_id in sampled_ids:
+        word = vocab.idx2word[word_id]
+        sampled_caption.append(word)
+        if word == '<end>':
+            break
+    sentence = ' '.join(sampled_caption)
 
-    sampled_ids_sorted = sorted(zip(terminated_confidences,sampled_ids_list), reverse=True)
-    #sampled_ids_sorted = [x for (y,x) in sorted(zip(terminated_confidences,sampled_ids_list))]
+    print(sentence)
+
+    # sampled_ids_list, terminated_confidences = decoder.beamSearch(feature, None, n = args.n)
+
+    # sampled_ids_list = np.array([ sampled_ids.cpu().data.numpy() for sampled_ids in sampled_ids_list ])
+
+    # # sampled_ids_list = [x for (y,x) in sorted(zip(terminated_confidences,sampled_ids_list),reverse=True)]
     
-    for _, sampled_with_confidence in enumerate(sampled_ids_sorted):
-        confidence, sample  = sampled_with_confidence
-        sampled_caption = []
-        for word_id in sample:
-            word = vocab.idx2word[word_id]
-            sampled_caption.append(word)
-            if word == '<end>':
-                break
-        sentence = ' '.join(sampled_caption)
+    # # Decode word_ids to words
+    # sorted_idx = np.argsort(terminated_confidences)
+
+    # sampled_ids_sorted = sorted(zip(terminated_confidences,sampled_ids_list))
+    # #sampled_ids_sorted = [x for (y,x) in sorted(zip(terminated_confidences,sampled_ids_list))]
+    
+    # for sampled_with_confidence in sampled_ids_sorted:
+    #     confidence, sample  = sampled_with_confidence
+    #     sampled_caption = []
+    #     for word_id in sample:
+    #         word = vocab.idx2word[word_id]
+    #         sampled_caption.append(word)
+    #         if word == '<end>':
+    #             break
+    #     sentence = ' '.join(sampled_caption)
         
-        # Print out image and generated caption.
-        print ("{} - {:.4f} ".format(sentence, confidence))
-    plt.imshow(np.asarray(image))
+    #     # Print out image and generated caption.
+    #     print ("{} - {:.4f} ".format(sentence, confidence))
     
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--image', type=str, required=True,
                         help='input image for generating caption')
-    parser.add_argument('--encoder_path', type=str, default='models/encoder-12-10000.pkl',
+    parser.add_argument('--encoder_path', type=str, default='logs/aesthetics/29042017151130/encoder-1-20000.pkl',
                         help='path for trained encoder')
-    parser.add_argument('--decoder_path', type=str, default='models/decoder-12-10000.pkl',
+    parser.add_argument('--decoder_path', type=str, default='logs/aesthetics/29042017151130/decoder-1-20000.pkl',
                         help='path for trained decoder')
     parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
                         help='path for vocabulary wrapper')

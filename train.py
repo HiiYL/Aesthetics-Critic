@@ -54,8 +54,8 @@ def train(save_path, args):
         encoder.load_state_dict(torch.load('models/encoder{}'.format(args.pretrained)))
         decoder.load_state_dict(torch.load('models/decoder{}'.format(args.pretrained)))
 
-    state = (Variable(torch.zeros(args.num_layers, 2, args.hidden_size)),
-     Variable(torch.zeros(args.num_layers, 2, args.hidden_size)))
+    state = (Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)),
+     Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)))
 
     if torch.cuda.is_available():
         encoder.cuda()
@@ -101,7 +101,7 @@ def train(save_path, args):
             decoder.zero_grad()
             encoder.zero_grad()
             features = encoder(images)
-            outputs = decoder(features, captions, lengths)
+            outputs = decoder(features, captions, lengths, state)
             loss = criterion(outputs, targets)
 
             loss.backward()
@@ -110,9 +110,23 @@ def train(save_path, args):
 
             # Print log info
             if total_iterations % args.log_step == 0:
-                print('Epoch [%d/%d], Step [%d/%d], Loss: %.4f, Perplexity: %5.4f'
+                #print()
+                sampled_ids = torch.max(outputs,1)[1].squeeze()
+                sampled_ids = sampled_ids.cpu().data.numpy()
+
+                sampled_caption = []
+                for word_id in sampled_ids:
+                    word = vocab.idx2word[word_id]
+                    sampled_caption.append(word)
+                    if word == '<end>':
+                        break
+                sentence = ' '.join(sampled_caption)
+
+                #print(sentence)
+                print('Epoch [%d/%d], Step [%d/%d], Loss: %.4f, Perplexity: %5.4f , Generated: %s'
                       %(epoch, args.num_epochs, i, total_step, 
-                        loss.data[0], np.exp(loss.data[0]))) 
+                        loss.data[0], np.exp(loss.data[0]),sentence)) 
+                #print()
 
             # Save the model
             if (total_iterations+1) % args.save_step == 0:
@@ -167,9 +181,9 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained', type=str)#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
-    parser.add_argument('--batch_size', type=int, default=4)
+    parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--num_workers', type=int, default=2)
-    parser.add_argument('--learning_rate', type=float, default=0.001)
+    parser.add_argument('--learning_rate', type=float, default=0.0001)
     parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')
     args = parser.parse_args()
     print(args)
