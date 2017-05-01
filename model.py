@@ -9,9 +9,10 @@ class EncoderCNN(nn.Module):
     def __init__(self, embed_size):
         """Load the pretrained ResNet-152 and replace top fc layer."""
         super(EncoderCNN, self).__init__()
-        self.resnet = models.resnet152(pretrained=True)
-        # for param in self.resnet.parameters():
-        #     param.requires_grad = False
+        self.resnet = models.inception_v3(pretrained=True)
+        self.resnet.aux_logits = False
+        for param in self.resnet.parameters():
+            param.requires_grad = False
         self.resnet.fc = nn.Linear(self.resnet.fc.in_features, embed_size)
         self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
         self.init_weights()
@@ -45,7 +46,6 @@ class DecoderRNN(nn.Module):
         
     def forward(self, features, captions, lengths):
         """Decode image feature vectors and generates captions."""
-        print(lengths)
         embeddings = self.embed(captions)
         embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
         packed = pack_padded_sequence(embeddings, lengths, batch_first=True) 

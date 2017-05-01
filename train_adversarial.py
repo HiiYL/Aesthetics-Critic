@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
 from torch.autograd import Variable 
-from torch.nn.utils.rnn import pack_padded_sequence
+from torch.nn.utils.rnn import pack_padded_sequence,pad_packed_sequence
 from torchvision import transforms
 
 cudnn.benchmark = True
@@ -72,9 +72,11 @@ def train(save_path, args):
         state = [s.cuda() for s in state]
         label = label.cuda()
         criterion_bce = criterion_bce.cuda()
+        criterion = criterion.cuda()
 
     label = Variable(label)
 
+    # optimizerE = torch.optim.Adam(encoder.parameters(), lr= 0.1 *args.learning_rate)
     optimizerG = torch.optim.Adam(netG.parameters(), lr=args.learning_rate)
     optimizerD = torch.optim.Adam(netD.parameters(), lr=args.learning_rate)
 
@@ -103,25 +105,24 @@ def train(save_path, args):
                 images = images.cuda()
                 captions = captions.cuda()
 
-            targets = pack_padded_sequence(captions, lengths, batch_first=True)[0]
+            targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
 
             # Forward, Backward and Optimize
             netG.zero_grad()
             netD.zero_grad()
             features = encoder(images).detach()
-            out, hidden = netG(features, captions, lengths,)
-            hidden_free = netG.forward_free(features, captions, lengths, state)
-            
+            out, hidden = netG(features, captions, lengths, state, teacher_forced=True)
+            outputs_free, hidden_free = netG(features, captions, lengths, state, teacher_forced=False)
 
             #print("real...")
-            output = netD(hidden.detach(), lengths)
+            output = netD(features, hidden.detach(), lengths)
             label.data.resize_(output.size()).fill_(real_label)
             D_loss_real = criterion_bce(output, label)
             D_loss_real.backward()
 
 
             #print("fake...")
-            output = netD(hidden_free.detach(), lengths)
+            output = netD(features, hidden_free.detach(), lengths)
             label.data.resize_(output.size()).fill_(fake_label)
             D_loss_fake = criterion_bce(output, label)
             D_loss_fake.backward()
@@ -133,7 +134,7 @@ def train(save_path, args):
             for p in netD.parameters():
                 p.requires_grad = False # to avoid computation
             netG.zero_grad()
-            output = netD(hidden_free, lengths)
+            output = netD(features, hidden_free, lengths)
             label.data.resize_(output.size()).fill_(real_label)
             G_loss = criterion(out, targets) + criterion_bce(output, label)
             G_loss.backward()
@@ -144,6 +145,35 @@ def train(save_path, args):
                 print('Epoch [%d/%d], Step [%d/%d], G_Loss: %.4f, D_Loss: %5.4f'
                       %(epoch, args.num_epochs, i, total_step, 
                         G_loss.data[0], D_loss.data[0])) 
+
+            if total_iterations % 100 == 0:
+                print()
+                sampled_ids = torch.max(out,1)[1].squeeze()
+                sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
+                sampled_ids = sampled_ids.cpu().data.numpy()
+
+                for i, comment in enumerate(sampled_ids):
+                    if i > 1:
+                        break
+                    sampled_caption = []
+                    for word_id in comment:
+                        word = vocab.idx2word[word_id]
+                        sampled_caption.append(word)
+                        if word == '<end>':
+                            break
+                    sentence = "[P]" + ' '.join(sampled_caption)
+                    print(sentence)
+
+                    sampled_caption = []
+                    sample = captions.cpu().data.numpy()
+                    for word_id in sample[i]:
+                        word = vocab.idx2word[word_id]
+                        sampled_caption.append(word)
+                        if word == '<end>':
+                            break
+                    sentence = "[S]" + ' '.join(sampled_caption)
+                    print(sentence)
+                    print()
 
             # # Save the model
             # if (total_iterations+1) % args.save_step == 0:
@@ -198,7 +228,7 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained', type=str)#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
-    parser.add_argument('--batch_size', type=int, default=1)
+    parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')

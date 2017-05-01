@@ -12,9 +12,9 @@ cudnn.benchmark = True
 
 import numpy as np
 import os
-from data_loader import get_loader 
+from data_loader_coco import get_loader 
 from build_vocab import Vocabulary
-from models import EncoderCNN, DecoderRNN,InceptionNet
+from models import EncoderCNN, DecoderRNN#,InceptionNet
 import pickle
 import datetime
 
@@ -27,7 +27,7 @@ def train(save_path, args):
     
     # Image preprocessing
     transform = transforms.Compose([
-        transforms.RandomCrop(args.crop_size),
+        transforms.Scale((299,299)),
         transforms.RandomHorizontalFlip(), 
         transforms.ToTensor(), 
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
@@ -37,15 +37,15 @@ def train(save_path, args):
         vocab = pickle.load(f)
     
 
-    training_location = "data/{}/train".format(args.dataset)
+    # training_location = "data/{}/train".format(args.dataset)
     # Build data loader
-    data_loader = get_loader(training_location, args.comments_path, vocab, 
+    data_loader = get_loader(args.image_dir, args.comments_path, vocab, 
                              transform, args.batch_size,
-                             shuffle=True, num_workers=args.num_workers) 
+                             shuffle=False, num_workers=args.num_workers) 
 
     # Build the models
-    encoder = EncoderCNN(args.embed_size, models.inception_v3(pretrained=True))#torch.load('data/net_model_epoch_10.pth').inception)
-    encoder.set_finetune(finetune=True)
+    encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True))
+    #encoder.set_finetune(finetune=False)
 
     decoder = DecoderRNN(args.embed_size, args.hidden_size, 
                              vocab, args.num_layers)
@@ -69,8 +69,8 @@ def train(save_path, args):
     #base_params = filter(lambda p: id(p) not in ignored_params,
     #                 encoder..parameters())
     params = [
-                {'params': decoder.parameters()},
-                {'params': encoder.parameters(), 'lr': 0.1 * args.learning_rate}
+                {'params': decoder.parameters()}
+                #{'params': encoder.parameters(), 'lr': 0.1 * args.learning_rate}
             ]
     optimizer = torch.optim.Adam(params, lr=args.learning_rate)
     
@@ -106,7 +106,6 @@ def train(save_path, args):
             loss     = criterion(outputs, targets)
 
             loss.backward()
-            #torch.nn.utils.clip_grad_norm(decoder.parameters(), args.clip)
             optimizer.step()
 
             # Print log info
@@ -115,34 +114,60 @@ def train(save_path, args):
                       %(epoch, args.num_epochs, i, total_step, 
                         loss.data[0], np.exp(loss.data[0]))) 
 
-            if total_iterations % 100 == 0:
+
+            if (total_iterations % ( 10 * args.log_step))  == 0:
                 print()
-                sampled_ids = torch.max(outputs,1)[1].squeeze()
-                sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
+                print()
+                decoder.eval()
+                for param in decoder.parameters():
+                    param.require_grad=False
+                    
+                sampled_ids = decoder.sample_with_attention(features[0:2], state)
+
+                decoder.train()
+                for param in decoder.parameters():
+                    param.require_grad=True
                 sampled_ids = sampled_ids.cpu().data.numpy()
-
-                for i, comment in enumerate(sampled_ids):
-                    if i > 1:
-                        break
+                
+                # Decode word_ids to words
+                for sampled_id in sampled_ids:
                     sampled_caption = []
-                    for word_id in comment:
+                    for word_id in sampled_id:
                         word = vocab.idx2word[word_id]
                         sampled_caption.append(word)
                         if word == '<end>':
                             break
-                    sentence = "[P]" + ' '.join(sampled_caption)
+                    sentence = ' '.join(sampled_caption)
                     print(sentence)
+            # if total_iterations % 5 == 0:
+            #     print()
+            #     outputs = decoder(features, captions, lengths, state, teacher_forced=False)
+            #     sampled_ids = torch.max(outputs,1)[1].squeeze()
+            #     sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
+            #     sampled_ids = sampled_ids.cpu().data.numpy()
 
-                    sampled_caption = []
-                    sample = captions.cpu().data.numpy()
-                    for word_id in sample[i]:
-                        word = vocab.idx2word[word_id]
-                        sampled_caption.append(word)
-                        if word == '<end>':
-                            break
-                    sentence = "[S]" + ' '.join(sampled_caption)
-                    print(sentence)
-                    print()
+            #     for i, comment in enumerate(sampled_ids):
+            #         if i > 1:
+            #             break
+            #         sampled_caption = []
+            #         for word_id in comment:
+            #             word = vocab.idx2word[word_id]
+            #             sampled_caption.append(word)
+            #             if word == '<end>':
+            #                 break
+            #         sentence = "[P]" + ' '.join(sampled_caption)
+            #         print(sentence)
+
+            #         sampled_caption = []
+            #         sample = captions.cpu().data.numpy()
+            #         for word_id in sample[i]:
+            #             word = vocab.idx2word[word_id]
+            #             sampled_caption.append(word)
+            #             if word == '<end>':
+            #                 break
+            #         sentence = "[S]" + ' '.join(sampled_caption)
+            #         print(sentence)
+            #         print()
 
             # Save the model
             if (total_iterations+1) % args.save_step == 0:
@@ -172,14 +197,14 @@ if __name__ == '__main__':
                         help='path for vocabulary wrapper')
     parser.add_argument('--dataset', type=str, default='aesthetics' ,
                         help='dataset to use')
-    parser.add_argument('--comments_path', type=str,
-                        default='data/labels.h5',
-                        help='path for train annotation json file')
-    # parser.add_argument('--image_dir', type=str, default='./data/resized2014' ,
-    #                     help='directory for resized images')
     # parser.add_argument('--comments_path', type=str,
-    #                     default='./data/annotations/captions_train2014.json',
+    #                     default='data/labels.h5',
     #                     help='path for train annotation json file')
+    parser.add_argument('--image_dir', type=str, default='./data/resized2014' ,
+                        help='directory for resized images')
+    parser.add_argument('--comments_path', type=str,
+                        default='./data/annotations/captions_train2014.json',
+                        help='path for train annotation json file')
     parser.add_argument('--log_step', type=int , default=10,
                         help='step size for prining log info')
     parser.add_argument('--tb_log_step', type=int , default=100,
@@ -197,10 +222,10 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained', type=str)#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
-    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--batch_size', type=int, default=2)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--learning_rate', type=float, default=0.001)
-    parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')
+    #parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')
     args = parser.parse_args()
     print(args)
 

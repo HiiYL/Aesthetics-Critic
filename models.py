@@ -50,14 +50,6 @@ class EncoderCNN(nn.Module):
         else:
             for parameters in self.parameters():
                 parameters.requires_grad = False
-            # for parameters in self.fc.parameters():
-            #     parameters.requires_grad = True
-
-        
-    # def init_weights(self):
-    #     """Initialize the weights."""
-    #     self.fc.weight.data.normal_(0.0, 0.02)
-    #     self.fc.bias.data.fill_(0)
         
     def forward(self, x):
         """Extract the image feature vectors."""
@@ -118,55 +110,109 @@ class DecoderRNN(nn.Module):
         self.vocab_size = len(vocab)
 
         self.embed = nn.Embedding(self.vocab_size, embed_size)
-        # self.embed.weight = nn.Parameter(embeddings)
+        # self.lstm = nn.LSTM(embed_size, hidden_size, num_layers, batch_first=True)
+        self.linear = nn.Linear(hidden_size, self.vocab_size)
+
+        
 
         self.fc = nn.Linear(2048, embed_size)#inception.fc
+        self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
 
         self.hidden_size = hidden_size
-        self.gru = nn.GRU(embed_size, hidden_size, num_layers, batch_first=True, bidirectional=False)
+        # self.gru = nn.GRU(embed_size, hidden_size, num_layers, batch_first=True, bidirectional=False)
+        
         self.gru_cell = nn.GRUCell(embed_size, hidden_size)
-        self.linear = nn.Linear(hidden_size, self.vocab_size)
+        
         self.linear_fc = nn.Linear(hidden_size * 2, hidden_size)
 
+        self.attn = nn.Linear( hidden_size * 2, hidden_size)
+        self.attn_combine = nn.Linear( hidden_size * 2, hidden_size)
+
+        self.log_softmax = nn.LogSoftmax()
+
         self.init_weights()
+
+        
     
     def init_weights(self):
         """Initialize weights."""
         self.embed.weight.data.uniform_(-0.1, 0.1)
+
         self.linear.weight.data.uniform_(-0.1, 0.1)
         self.linear.bias.data.fill_(0)
-        
-    def forward(self, features, captions, lengths, states):
-        """Decode image feature vectors and generates captions."""
-        #if random.random() > 0.5:
-        #return self.forward_forced(features, captions, lengths, state)
-        #else:
-        features = self.fc(features)
-        # return self.forward_forced(features, captions,lengths)
-        return self.forward_free_hidden_cell(features,lengths, states)
 
-    def forward_forced(self,features, captions, lengths):
+        self.fc.weight.data.normal_(0.0, 0.02)
+        self.fc.bias.data.fill_(0)
+
+        self.attn.weight.data.normal_(0.0, 0.02)
+        self.attn.bias.data.fill_(0)
+
+        self.attn_combine.weight.data.normal_(0.0, 0.02)
+        self.attn_combine.bias.data.fill_(0)
+
+    # def forward(self, features, captions, lengths):
+    #     """Decode image feature vectors and generates captions."""
+    #     embeddings = self.embed(captions)
+    #     embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
+    #     packed = pack_padded_sequence(embeddings, lengths, batch_first=True) 
+    #     hiddens, _ = self.lstm(packed)
+    #     outputs = self.linear(hiddens[0])
+    #     return outputs
+        
+    def forward(self, features, captions, lengths, states, teacher_forced=True):
+        """Decode image feature vectors and generates captions."""
+        features = self.bn(self.fc(features))
+        # return self.forward_forced(features, captions,lengths)
+        if teacher_forced:
+            return self.forward_forced_cell(features, captions,lengths, states)
+        else:
+            return self.forward_free_cell(features,lengths, states)
+
+    def forward_forced(self, features, captions, lengths):
+        """Decode image feature vectors and generates captions."""
         embeddings = self.embed(captions)
         embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
-        packed = pack_padded_sequence(embeddings, lengths, batch_first=True)
-
-        hiddens = self.gru(packed)
+        packed = pack_padded_sequence(embeddings, lengths, batch_first=True) 
+        hiddens, _ = self.lstm(packed)
         outputs = self.linear(hiddens[0])
-
         return outputs
 
-    def forward_free_forced_cell(self, features, lengths, states):
+    def forward_forced_cell(self, features, captions, lengths, states):
+        embeddings = self.embed(captions)
+        embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
         hiddens_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
-        inputs = features
         hx = states[0].squeeze()
         for i in range(lengths[0]):
+            inputs = embeddings[:,i,:]
+
+            attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
+            attn_applied = features * attn_weights
+            inputs = self.attn_combine(torch.cat((inputs, attn_applied ), 1))
+            
             hx = self.gru_cell(inputs, hx)
             hiddens_tensor[ :, i, :] = hx
-            inputs = self.linear_fc(torch.cat((inputs, hx),1))
 
         hiddens_tensor, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
         outputs = self.linear(hiddens_tensor)
-        return outputs
+        return self.log_softmax(outputs)
+
+    def forward_free_cell(self, features, lengths, states):
+        output_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.vocab_size))
+        inputs = features
+        hx = states[0].squeeze()
+        for i in range(lengths[0]):
+            attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
+            attn_applied = features * attn_weights
+            inputs = self.attn_combine(torch.cat((inputs, attn_applied ), 1))
+
+            hx = self.gru_cell(inputs, hx)
+            out = self.linear(hx)
+            output_tensor[:,i,:] = out
+            predicted = out.max(1)[1]
+            inputs = self.embed(predicted).squeeze()
+
+        output_tensor, _ = pack_padded_sequence(output_tensor, lengths, batch_first=True)
+        return output_tensor #self.log_softmax(output_tensor)
 
     def forward_free_hidden_cell(self, features, lengths, states):
         hiddens_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
@@ -179,44 +225,42 @@ class DecoderRNN(nn.Module):
 
         hiddens_tensor, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
         outputs = self.linear(hiddens_tensor)
-        return outputs
+        return outputs #self.log_softmax(outputs)
 
-    def forward_free(self, features, captions, lengths, states):
-        #hiddens = torch.FloatTensor(2,lengths[0],512)
-        ## size of lengths array is equal to batch size
-        output_tensor = Variable(torch.cuda.FloatTensor(len(lengths), lengths[0], 43892))
-        inputs = features.unsqueeze(1)
-        for i in range(lengths[0]):
-            #inputs = embeddings[:,i,:].unsqueeze(1)
-            hiddens, states = self.lstm(inputs, states)
-            output = self.linear(hiddens.squeeze(1))
-            inputs = self.embed(output.max(1)[1])
-            output_tensor[:,i,:] = output.unsqueeze(1)
-            
-        output_packed = pack_padded_sequence(output_tensor, lengths, batch_first=True)
+    def sample_with_attention(self, features, states):
+        features = self.bn(self.fc(features))
+        inputs = features
+        hx = states[0].squeeze()
+        sampled_ids = []
+        for i in range(20):
+            attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
+            attn_applied = features * attn_weights
+            inputs = self.attn_combine(torch.cat((inputs, attn_applied ), 1))
 
-        return output_packed[0] 
-    
+            hx = self.gru_cell(inputs, hx)
+            out = self.linear(hx)
+            predicted = out.max(1)[1]
+            sampled_ids.append(predicted)
+            inputs = self.embed(predicted).squeeze()
+
+        sampled_ids = torch.cat(sampled_ids, 1)
+        return sampled_ids.squeeze()
+
+
     def sample(self, features, states):
         """Samples captions for given image features (Greedy search)."""
-        # sampled_ids = []
-        hiddens_list = []
+        features = self.bn(self.fc(features))
+
+        sampled_ids = []
         inputs = features.unsqueeze(1)
         for i in range(20):                                      # maximum sampling length
             hiddens, states = self.lstm(inputs, states)          # (batch_size, 1, hidden_size)
-            # outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
-            hiddens_list.append(hiddens)
-            # predicted = outputs.max(1)[1]
-            # sampled_ids.append(predicted)
-            inputs = hiddens
-            #inputs = self.embed(predicted)
-        # sampled_ids = torch.cat(sampled_ids, 1)                  # (batch_size, 20)
-        hiddens_list = torch.cat(hiddens_list, 1)
-
-        outputs = self.linear(hiddens_list[0])
-        # print(torch.max(outputs,1)[1])
-        # exit()
-        return torch.max(outputs,1)[1].squeeze()   #sampled_ids.squeeze()
+            outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
+            predicted = outputs.max(1)[1]
+            sampled_ids.append(predicted)
+            inputs = self.embed(predicted)
+        sampled_ids = torch.cat(sampled_ids, 1)                  # (batch_size, 20)
+        return sampled_ids.squeeze()
 
 
     def beamSearch(self, features, states, n=5):
