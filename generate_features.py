@@ -17,6 +17,8 @@ import pickle
 import datetime
 import torchvision.datasets as dset
 
+import time
+
 from tensorboard_logger import configure, log_value
 
 def train(save_path, args):
@@ -35,7 +37,12 @@ def train(save_path, args):
 
     training_location = "data/{}/train".format(args.dataset)
     # Build data loader
-    data_loader = dset.ImageFolder(training_location, transform)
+    dataset = dset.ImageFolder(training_location, transform)
+
+    data_loader = torch.utils.data.DataLoader(dataset=dataset, 
+                                          batch_size=args.batch_size,
+                                          shuffle=False,
+                                          num_workers=args.num_workers)
 
     # Build the models
     encoder = EncoderCNN(args.embed_size, torch.load('data/net_model_epoch_10.pth').inception)
@@ -49,32 +56,29 @@ def train(save_path, args):
 
     total_iterations = 0
 
-    features_list = []
+    features_list = None
     for i, images in enumerate(data_loader):
-
-
-        for p in netD.parameters():  # reset require_grad
-            p.requires_grad = True   # they are set to False below in netG update
-        
         # Set mini-batch dataset
+        images, _ = images
         images = Variable(images, volatile=True)
         if torch.cuda.is_available():
             images = images.cuda()
 
-
         features = encoder(images)
-
-        features_list.append(features)
+        if features_list is None:
+            features_list = features.data.cpu().numpy()
+        else:
+            features_list = np.concatenate((features_list,features.data.cpu().numpy() ), 0)
 
         # Print log info
         if total_iterations % args.log_step == 0:
-            print('Epoch [%d/%d], Step [%d/%d], G_Loss: %.4f, D_Loss: %5.4f'
-                  %(epoch, args.num_epochs, i, total_step, 
-                    G_loss.data[0], D_loss.data[0]))
+            print('Step [%d/%d] - Generating Features' %(i, total_step))
+        time.sleep(0.5)
 
         total_iterations += 1
 
-        pickle.dump(features_list, open("features.pkl", "wb"))
+    features_list.tofile('features.npy')
+    #pickle.dump(features_list, open("features.pkl", "wb"))
 
 
                 
@@ -113,7 +117,7 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained', type=str)#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
-    parser.add_argument('--batch_size', type=int, default=1)
+    parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')

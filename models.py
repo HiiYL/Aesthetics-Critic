@@ -39,9 +39,9 @@ class EncoderCNN(nn.Module):
         self.Mixed_7a = inception.Mixed_7a
         self.Mixed_7b = inception.Mixed_7b
         self.Mixed_7c = inception.Mixed_7c
-        self.fc = nn.Linear(inception.fc.in_features, embed_size)#inception.fc
+        
 
-        self.init_weights()
+        # self.init_weights()
 
     def set_finetune(self,finetune=False):
         if finetune:
@@ -50,14 +50,14 @@ class EncoderCNN(nn.Module):
         else:
             for parameters in self.parameters():
                 parameters.requires_grad = False
-            for parameters in self.fc.parameters():
-                parameters.requires_grad = True
+            # for parameters in self.fc.parameters():
+            #     parameters.requires_grad = True
 
         
-    def init_weights(self):
-        """Initialize the weights."""
-        self.fc.weight.data.normal_(0.0, 0.02)
-        self.fc.bias.data.fill_(0)
+    # def init_weights(self):
+    #     """Initialize the weights."""
+    #     self.fc.weight.data.normal_(0.0, 0.02)
+    #     self.fc.bias.data.fill_(0)
         
     def forward(self, x):
         """Extract the image feature vectors."""
@@ -107,8 +107,6 @@ class EncoderCNN(nn.Module):
         x = F.dropout(x, training=self.training)
         # 1 x 1 x 2048
         x = x.view(x.size(0), -1)
-        # 2048
-        x = self.fc(x)
 
         return x
 
@@ -122,12 +120,14 @@ class DecoderRNN(nn.Module):
         self.embed = nn.Embedding(self.vocab_size, embed_size)
         # self.embed.weight = nn.Parameter(embeddings)
 
-        self.lstm = nn.LSTM(embed_size, hidden_size, num_layers,dropout=0.5, batch_first=True, bidirectional=False)
-        self.linear = nn.Linear(hidden_size, self.vocab_size)
+        self.fc = nn.Linear(2048, embed_size)#inception.fc
 
-        ## Tie weights
-        #self.embed.weight = self.linear.weight
-        self.dropout = nn.Dropout(0.5)
+        self.hidden_size = hidden_size
+        self.gru = nn.GRU(embed_size, hidden_size, num_layers, batch_first=True, bidirectional=False)
+        self.gru_cell = nn.GRUCell(embed_size, hidden_size)
+        self.linear = nn.Linear(hidden_size, self.vocab_size)
+        self.linear_fc = nn.Linear(hidden_size * 2, hidden_size)
+
         self.init_weights()
     
     def init_weights(self):
@@ -136,64 +136,66 @@ class DecoderRNN(nn.Module):
         self.linear.weight.data.uniform_(-0.1, 0.1)
         self.linear.bias.data.fill_(0)
         
-    def forward(self, features, captions, lengths, state):
+    def forward(self, features, captions, lengths, states):
         """Decode image feature vectors and generates captions."""
-        if random.random() > 0.5:
-            return self.forward_forced(features, captions, lengths, state)
-        else:
-            return self.forward_free(features, captions, lengths, state)
+        #if random.random() > 0.5:
+        #return self.forward_forced(features, captions, lengths, state)
+        #else:
+        features = self.fc(features)
+        # return self.forward_forced(features, captions,lengths)
+        return self.forward_free_hidden_cell(features,lengths, states)
 
-    def forward_forced(self,features, captions, lengths, state):
-        embeddings = self.dropout(self.embed(captions))
+    def forward_forced(self,features, captions, lengths):
+        embeddings = self.embed(captions)
         embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
         packed = pack_padded_sequence(embeddings, lengths, batch_first=True)
 
-        hiddens, _ = self.lstm(packed)
-        outputs = self.linear(self.dropout(hiddens[0]))
+        hiddens = self.gru(packed)
+        outputs = self.linear(hiddens[0])
 
+        return outputs
+
+    def forward_free_forced_cell(self, features, lengths, states):
+        hiddens_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
+        inputs = features
+        hx = states[0].squeeze()
+        for i in range(lengths[0]):
+            hx = self.gru_cell(inputs, hx)
+            hiddens_tensor[ :, i, :] = hx
+            inputs = self.linear_fc(torch.cat((inputs, hx),1))
+
+        hiddens_tensor, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
+        outputs = self.linear(hiddens_tensor)
+        return outputs
+
+    def forward_free_hidden_cell(self, features, lengths, states):
+        hiddens_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
+        inputs = features
+        hx = states[0].squeeze()
+        for i in range(lengths[0]):
+            hx = self.gru_cell(inputs, hx)
+            hiddens_tensor[ :, i, :] = hx
+            inputs = self.linear_fc(torch.cat((inputs, hx),1))
+
+        hiddens_tensor, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
+        outputs = self.linear(hiddens_tensor)
         return outputs
 
     def forward_free(self, features, captions, lengths, states):
         #hiddens = torch.FloatTensor(2,lengths[0],512)
-        # output_list = []
-        output_tensor = Variable(torch.cuda.FloatTensor(1, lengths[0], 43892))
+        ## size of lengths array is equal to batch size
+        output_tensor = Variable(torch.cuda.FloatTensor(len(lengths), lengths[0], 43892))
         inputs = features.unsqueeze(1)
         for i in range(lengths[0]):
             #inputs = embeddings[:,i,:].unsqueeze(1)
             hiddens, states = self.lstm(inputs, states)
-            output = self.linear(self.dropout(hiddens.squeeze(1)))
+            output = self.linear(hiddens.squeeze(1))
             inputs = self.embed(output.max(1)[1])
             output_tensor[:,i,:] = output.unsqueeze(1)
             
         output_packed = pack_padded_sequence(output_tensor, lengths, batch_first=True)
 
         return output_packed[0] 
-
-    # def forward_free(self, features, captions, lengths, states):
-    #     #hiddens = torch.FloatTensor(2,lengths[0],512)
-    #     hiddens_list = []
-
-    #     inputs = features.unsqueeze(1)
-    #     for i in range(lengths[0]):
-    #         #inputs = embeddings[:,i,:].unsqueeze(1)
-    #         hiddens, states = self.lstm(inputs, states)
-    #         hiddens_list.append(hiddens)
-    #         inputs = hiddens
-    #         #hiddens[:,i,:] = hiddens.squeeze()
-            
-    #         #predicted = outputs.max(1)[1]
-    #         #embeddings = self.embed(predicted)
-
-    #     hiddens_list = torch.cat(hiddens_list, 1)
-    #     hidden_packed = pack_padded_sequence(hiddens_list, lengths, batch_first=True)
-
-    #     #packed = pack_padded_sequence(embeddings, lengths, batch_first=True)
-    #     #hiddens, _ = self.lstm(packed)
-    #     #print(hiddens)
-
-    #     outputs = self.linear(self.dropout(hidden_packed[0]))
-
-    #     return outputs 
     
     def sample(self, features, states):
         """Samples captions for given image features (Greedy search)."""
@@ -211,7 +213,7 @@ class DecoderRNN(nn.Module):
         # sampled_ids = torch.cat(sampled_ids, 1)                  # (batch_size, 20)
         hiddens_list = torch.cat(hiddens_list, 1)
 
-        outputs = self.linear(self.dropout(hiddens_list[0]))
+        outputs = self.linear(hiddens_list[0])
         # print(torch.max(outputs,1)[1])
         # exit()
         return torch.max(outputs,1)[1].squeeze()   #sampled_ids.squeeze()

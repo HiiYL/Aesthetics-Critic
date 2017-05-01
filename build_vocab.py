@@ -27,7 +27,7 @@ class Vocabulary(object):
     def __len__(self):
         return len(self.word2idx)
 
-def build_vocab(dataframe_path, threshold=4):
+def build_vocab(dataframe_path, threshold=15):
     """Build a simple vocabulary wrapper."""
     store = HDFStore(dataframe_path)
     ava_table = pd.concat([store['labels_train'], store['labels_test']])
@@ -73,7 +73,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataframe_path', type=str, 
-                        default='labels.h5', 
+                        default='data/labels.h5', 
                         help='path for train annotation file')
     parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl', 
                         help='path for saving vocabulary wrapper')

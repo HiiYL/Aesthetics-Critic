@@ -5,8 +5,9 @@ import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
 from torch.autograd import Variable 
-from torch.nn.utils.rnn import pack_padded_sequence
+from torch.nn.utils.rnn import pack_padded_sequence,pad_packed_sequence
 from torchvision import transforms
+from torchvision import models
 
 cudnn.benchmark = True
 
@@ -44,8 +45,8 @@ def train(save_path, args):
                              shuffle=True, num_workers=args.num_workers) 
 
     # Build the models
-    encoder = EncoderCNN(args.embed_size, torch.load('data/net_model_epoch_10.pth').inception)
-    encoder.set_finetune(finetune=False)
+    encoder = EncoderCNN(args.embed_size, models.inception_v3(pretrained=True))#torch.load('data/net_model_epoch_10.pth').inception)
+    encoder.set_finetune(finetune=True)
 
     decoder = DecoderRNN(args.embed_size, args.hidden_size, 
                              vocab, args.num_layers)
@@ -70,7 +71,7 @@ def train(save_path, args):
     #                 encoder..parameters())
     params = [
                 {'params': decoder.parameters()},
-                {'params': encoder.fc.parameters()}
+                {'params': encoder.parameters(), 'lr': 0.1 * args.learning_rate}
             ]
     optimizer = torch.optim.Adam(params, lr=args.learning_rate)
     
@@ -79,29 +80,30 @@ def train(save_path, args):
 
     total_iterations = 0
 
+    features_fixed = None
+    captions_fixed = None
+    lengths_fixed = None
+
     for epoch in range(args.num_epochs):
         if epoch % 8 == 0:
             lr = args.learning_rate * (0.5 ** (epoch // 8))
             for param_group in optimizer.param_groups:
                 param_group['lr'] = lr
 
-        for i, (images, captions, lengths) in enumerate(data_loader):
-            
+        for i, (images, captions, lengths) in enumerate(data_loader):    
             # Set mini-batch dataset
             images = Variable(images)
             captions = Variable(captions)
             if torch.cuda.is_available():
                 images = images.cuda()
                 captions = captions.cuda()
-            targets = pack_padded_sequence(captions, lengths, batch_first=True)[0]
-
-
+            targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
 
             # Forward, Backward and Optimize
             decoder.zero_grad()
             encoder.zero_grad()
             features = encoder(images)
-            outputs = decoder(features, captions, lengths, state)
+            outputs= decoder(features, captions, lengths, state)
             loss = criterion(outputs, targets)
 
             loss.backward()
@@ -110,23 +112,38 @@ def train(save_path, args):
 
             # Print log info
             if total_iterations % args.log_step == 0:
-                #print()
+                print('Epoch [%d/%d], Step [%d/%d], Loss: %.4f, Perplexity: %5.4f'
+                      %(epoch, args.num_epochs, i, total_step, 
+                        loss.data[0], np.exp(loss.data[0]))) 
+
+            if total_iterations % 100 == 0:
+                print()
                 sampled_ids = torch.max(outputs,1)[1].squeeze()
+                sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
                 sampled_ids = sampled_ids.cpu().data.numpy()
 
-                sampled_caption = []
-                for word_id in sampled_ids:
-                    word = vocab.idx2word[word_id]
-                    sampled_caption.append(word)
-                    if word == '<end>':
+                for i, comment in enumerate(sampled_ids):
+                    if i > 1:
                         break
-                sentence = ' '.join(sampled_caption)
+                    sampled_caption = []
+                    for word_id in comment:
+                        word = vocab.idx2word[word_id]
+                        sampled_caption.append(word)
+                        if word == '<end>':
+                            break
+                    sentence = "[P]" + ' '.join(sampled_caption)
+                    print(sentence)
 
-                #print(sentence)
-                print('Epoch [%d/%d], Step [%d/%d], Loss: %.4f, Perplexity: %5.4f , Generated: %s'
-                      %(epoch, args.num_epochs, i, total_step, 
-                        loss.data[0], np.exp(loss.data[0]),sentence)) 
-                #print()
+                    sampled_caption = []
+                    sample = captions.cpu().data.numpy()
+                    for word_id in sample[i]:
+                        word = vocab.idx2word[word_id]
+                        sampled_caption.append(word)
+                        if word == '<end>':
+                            break
+                    sentence = "[S]" + ' '.join(sampled_caption)
+                    print(sentence)
+                    print()
 
             # Save the model
             if (total_iterations+1) % args.save_step == 0:
@@ -138,9 +155,9 @@ def train(save_path, args):
                                         'encoder-%d-%d.pkl' %(epoch+1, i+1)))
 
 
-            if total_iterations % args.tb_log_step == 0:
-                log_value('Loss', loss.data[0], total_iterations)
-                log_value('Perplexity', np.exp(loss.data[0]), total_iterations)
+            # if total_iterations % args.tb_log_step == 0:
+            #     log_value('Loss', loss.data[0], total_iterations)
+            #     log_value('Perplexity', np.exp(loss.data[0]), total_iterations)
 
             total_iterations += 1
 
@@ -166,7 +183,7 @@ if __name__ == '__main__':
     #                     help='path for train annotation json file')
     parser.add_argument('--log_step', type=int , default=10,
                         help='step size for prining log info')
-    parser.add_argument('--tb_log_step', type=int , default=10,
+    parser.add_argument('--tb_log_step', type=int , default=100,
                         help='step size for prining log info')
     parser.add_argument('--save_step', type=int , default=10000,
                         help='step size for saving trained models')
@@ -176,14 +193,14 @@ if __name__ == '__main__':
                         help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int , default=512 ,
                         help='dimension of lstm hidden states')
-    parser.add_argument('--num_layers', type=int , default=3 ,
+    parser.add_argument('--num_layers', type=int , default=1 ,
                         help='number of layers in lstm')
     parser.add_argument('--pretrained', type=str)#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
-    parser.add_argument('--batch_size', type=int, default=1)
+    parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--num_workers', type=int, default=2)
-    parser.add_argument('--learning_rate', type=float, default=0.0001)
+    parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')
     args = parser.parse_args()
     print(args)
@@ -200,5 +217,5 @@ if __name__ == '__main__':
     if not os.path.exists(save_path):
         os.mkdir(save_path)
 
-    configure(save_path)
+    # configure(save_path)
     train(save_path, args)
