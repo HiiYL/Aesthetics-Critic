@@ -70,6 +70,8 @@ class CocoValDataset(data.Dataset):
         self.transform = transform
         self.ids = list(self.coco.imgs.keys())
 
+        print(len(self.ids))
+
     def __getitem__(self, index):
         """Returns one data pair (image and caption)."""
         coco = self.coco
@@ -94,6 +96,7 @@ class CocoValDataset(data.Dataset):
         caption.extend([vocab(token) for token in tokens])
         caption.append(vocab('<end>'))
         target = torch.Tensor(caption)
+        #print(index)
         return image, target, img_id
 
     def __len__(self):
@@ -138,7 +141,7 @@ def get_loader(mode, vocab, transform, batch_size, shuffle, num_workers):
         coco = CocoDataset(mode=mode,
                            vocab=vocab,
                            transform=transform)
-    else:
+    elif mode == "val":
         coco = CocoValDataset(mode=mode,
                            vocab=vocab,
                            transform=transform)

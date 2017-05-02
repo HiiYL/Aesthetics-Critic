@@ -45,7 +45,7 @@ def train(save_path, args):
                              shuffle=True, num_workers=args.num_workers)
     val_data_loader = get_loader("val", vocab, 
                              transform, args.batch_size,
-                             shuffle=True, num_workers=args.num_workers)
+                             shuffle=False, num_workers=args.num_workers)
 
     # Build the models
     encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True))
@@ -89,95 +89,106 @@ def train(save_path, args):
             for param_group in optimizer.param_groups:
                 param_group['lr'] = lr
 
-        # for i, (images, captions, lengths, img_id) in enumerate(train_data_loader):    
-        #     # Set mini-batch dataset
-        #     images = Variable(images)
-        #     captions = Variable(captions)
-        #     if torch.cuda.is_available():
-        #         images = images.cuda()
-        #         captions = captions.cuda()
-        #     targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
+        print("training...")
 
-        #     # Forward, Backward and Optimize
-        #     decoder.zero_grad()
-        #     encoder.zero_grad()
-        #     features = encoder(images)
-        #     outputs  = decoder(features, captions, lengths, state)
-        #     loss     = criterion(outputs, targets)
+        decoder.train()
+        encoder.train()
 
-        #     loss.backward()
-        #     optimizer.step()
+        for parameter in encoder.parameters():
+            parameter.requires_grad=True
 
-        #     # Print log info
-        #     if total_iterations % args.log_step == 0:
-        #         print('Epoch [%d/%d], Step [%d/%d], Loss: %.4f, Perplexity: %5.4f'
-        #               %(epoch, args.num_epochs, i, total_step, 
-        #                 loss.data[0], np.exp(loss.data[0]))) 
+        for parameter in decoder.parameters():
+            parameter.requires_grad=True
 
-        #     if total_iterations % 100 == 0:
-        #         print()
-        #         decoder.eval()
-        #         for parameter in decoder.parameters():
-        #             parameter.requires_grad=False
-        #         outputs  = decoder(features, captions, lengths, state, teacher_forced=False, use_random=False)
-        #         for parameter in decoder.parameters():
-        #             parameter.requires_grad=True
-        #         decoder.train()
-        #         sampled_ids = torch.max(outputs,1)[1].squeeze()
-        #         sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
-        #         sampled_ids = sampled_ids.cpu().data.numpy()
+        for i, (images, captions, lengths, img_id) in enumerate(train_data_loader):   
+            # Set mini-batch dataset
+            images = Variable(images)
+            captions = Variable(captions)
+            if torch.cuda.is_available():
+                images = images.cuda()
+                captions = captions.cuda()
+            targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
 
-        #         for i, comment in enumerate(sampled_ids):
-        #             if i > 1:
-        #                 break
-        #             sampled_caption = []
-        #             for word_id in comment:
-        #                 word = vocab.idx2word[word_id]
-        #                 sampled_caption.append(word)
-        #                 if word == '<end>':
-        #                     break
-        #             sentence = "[P]" + ' '.join(sampled_caption)
-        #             print(sentence)
+            # Forward, Backward and Optimize
+            decoder.zero_grad()
+            encoder.zero_grad()
+            features = encoder(images)
+            outputs  = decoder(features, captions, lengths, state)
+            loss     = criterion(outputs, targets)
 
-        #             sampled_caption = []
-        #             sample = captions.cpu().data.numpy()
-        #             for word_id in sample[i]:
-        #                 word = vocab.idx2word[word_id]
-        #                 sampled_caption.append(word)
-        #                 if word == '<end>':
-        #                     break
-        #             sentence = "[S]" + ' '.join(sampled_caption)
-        #             print(sentence)
-        #             print()
+            loss.backward()
+            optimizer.step()
 
-        #     # Save the model
-        #     # if (total_iterations+1) % args.save_step == 0:
-        #     #     torch.save(decoder.state_dict(), 
-        #     #                os.path.join(save_path, 
-        #     #                             'decoder-%d-%d.pkl' %(epoch+1, i+1)))
-        #     #     torch.save(encoder.state_dict(), 
-        #     #                os.path.join(save_path, 
-        #     #                             'encoder-%d-%d.pkl' %(epoch+1, i+1)))
+            # Print log info
+            if total_iterations % args.log_step == 0:
+                print('Epoch [%d/%d], Step [%d/%d], Loss: %.4f, Perplexity: %5.4f'
+                      %(epoch, args.num_epochs, i, total_step, 
+                        loss.data[0], np.exp(loss.data[0]))) 
+
+            if total_iterations % 100 == 0:
+                print()
+                decoder.eval()
+                for parameter in decoder.parameters():
+                    parameter.requires_grad=False
+                outputs  = decoder(features, captions, lengths, state, teacher_forced=False, use_random=False)
+                for parameter in decoder.parameters():
+                    parameter.requires_grad=True
+                decoder.train()
+                sampled_ids = torch.max(outputs,1)[1].squeeze()
+                sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
+                sampled_ids = sampled_ids.cpu().data.numpy()
+
+                for i, comment in enumerate(sampled_ids):
+                    if i > 1:
+                        break
+                    sampled_caption = []
+                    for word_id in comment:
+                        word = vocab.idx2word[word_id]
+                        sampled_caption.append(word)
+                        if word == '<end>':
+                            break
+                    sentence = "[P]" + ' '.join(sampled_caption)
+                    print(sentence)
+
+                    sampled_caption = []
+                    sample = captions.cpu().data.numpy()
+                    for word_id in sample[i]:
+                        word = vocab.idx2word[word_id]
+                        sampled_caption.append(word)
+                        if word == '<end>':
+                            break
+                    sentence = "[S]" + ' '.join(sampled_caption)
+                    print(sentence)
+                    print()
+
+            # Save the model
+            # if (total_iterations+1) % args.save_step == 0:
+            #     torch.save(decoder.state_dict(), 
+            #                os.path.join(save_path, 
+            #                             'decoder-%d-%d.pkl' %(epoch+1, i+1)))
+            #     torch.save(encoder.state_dict(), 
+            #                os.path.join(save_path, 
+            #                             'encoder-%d-%d.pkl' %(epoch+1, i+1)))
 
 
-        #     if total_iterations % args.tb_log_step == 0:
-        #         log_value('Loss', loss.data[0], total_iterations)
-        #         log_value('Perplexity', np.exp(loss.data[0]), total_iterations)
+            if total_iterations % args.tb_log_step == 0:
+                log_value('Loss', loss.data[0], total_iterations)
+                log_value('Perplexity', np.exp(loss.data[0]), total_iterations)
 
-        #     total_iterations += 1
+            total_iterations += 1
 
+
+        print('validating...')
         decoder.eval()
         encoder.eval()
 
         for parameter in encoder.parameters():
             parameter.requires_grad=False
-
         for parameter in decoder.parameters():
             parameter.requires_grad=False
 
         val_json = []
         total_val_step = len(val_data_loader)
-        used_img_ids = []
         for i, (images, captions, lengths, img_id) in enumerate(val_data_loader):
             if i > 100:
                 break
@@ -196,7 +207,7 @@ def train(save_path, args):
             sampled_ids = torch.max(outputs,1)[1].squeeze()
             sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
             sampled_ids = sampled_ids.cpu().data.numpy()
-            loss     = criterion(outputs, targets)
+            loss        = criterion(outputs, targets)
 
             for j, comment in enumerate(sampled_ids):
                 sampled_caption = []
@@ -207,12 +218,8 @@ def train(save_path, args):
                     if word != '<start>' and word != '<pad>':
                         sampled_caption.append(word)
 
-                if img_id in used_img_ids:
-                    continue
-                else:
-                    item_json = {"image_id": img_id[j], "caption":' '.join(sampled_caption) }
-                    val_json.append(item_json)
-                    used_img_ids.append(img_id)
+                item_json = {"image_id": img_id[j], "caption":' '.join(sampled_caption) }
+                val_json.append(item_json)
 
             # Print log info
             if i % args.log_step == 0:
@@ -222,14 +229,7 @@ def train(save_path, args):
 
         with open('captions_val2014_fakecap_results.json', 'w') as outfile:
             json.dump(val_json, outfile)
-        decoder.train()
-        encoder.train()
 
-        for parameter in encoder.parameters():
-            parameter.requires_grad=True
-
-        for parameter in decoder.parameters():
-            parameter.requires_grad=True
 
 def test():
     yield

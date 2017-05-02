@@ -99,17 +99,13 @@ class G(nn.Module):
         self.vocab_size = len(vocab)
 
         self.embed = nn.Embedding(self.vocab_size, embed_size)
-        # self.lstm = nn.LSTM(embed_size, hidden_size, num_layers, batch_first=True)
         self.linear = nn.Linear(hidden_size, self.vocab_size)
 
-        
-
-        self.fc = nn.Linear(2048, embed_size)#inception.fc
+        self.fc = nn.Linear(2048, embed_size)
         self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
 
         self.hidden_size = hidden_size
-        # self.gru = nn.GRU(embed_size, hidden_size, num_layers, batch_first=True, bidirectional=False)
-        
+
         self.gru_cell = nn.GRUCell(embed_size, hidden_size)
         
         self.linear_fc = nn.Linear(hidden_size * 2, hidden_size)
@@ -118,6 +114,7 @@ class G(nn.Module):
         self.attn_combine = nn.Linear( hidden_size * 2, hidden_size)
 
         self.log_softmax = nn.LogSoftmax()
+        self.relu = nn.ReLU()
 
         self.init_weights()
     
@@ -155,7 +152,7 @@ class G(nn.Module):
             inputs = embeddings[:,i,:]
             attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
             attn_applied = features * attn_weights
-            inputs = self.attn_combine(torch.cat((inputs, attn_applied ), 1))
+            inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
             
             hx = self.gru_cell(inputs, hx)
             hiddens_tensor[ :, i, :] = hx
@@ -173,7 +170,7 @@ class G(nn.Module):
         for i in range(lengths[0]):
             attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
             attn_applied = features * attn_weights
-            inputs = self.attn_combine(torch.cat((inputs, attn_applied ), 1))
+            inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
 
             hx = self.gru_cell(inputs, hx)
             out = self.linear(hx)
@@ -184,7 +181,7 @@ class G(nn.Module):
             output_tensor [:,i,:] = out
 
         output_tensor, _ = pack_padded_sequence(output_tensor, lengths, batch_first=True)
-        # hiddens_tensor, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
+        #hiddens_tensor, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
         return self.log_softmax(output_tensor), hiddens_tensor
     
     def sample(self, features, states):
@@ -295,6 +292,9 @@ class D(nn.Module):
         self.dropout = nn.Dropout(0.5)
         self.sigmoid = nn.Sigmoid()
 
+        self.bn2 = nn.BatchNorm1d(hidden_size + hidden_size, momentum=0.01)
+        self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
+
         self.relu = nn.ReLU()
 
         self.init_weights()
@@ -304,6 +304,10 @@ class D(nn.Module):
         #self.embed.weight.data.uniform_(-0.1, 0.1)
         self.linear.weight.data.uniform_(-0.1, 0.1)
         self.linear.bias.data.fill_(0)
+        self.linear2.weight.data.uniform_(-0.1, 0.1)
+        self.linear2.bias.data.fill_(0)
+        self.linear3.weight.data.uniform_(-0.1, 0.1)
+        self.linear3.bias.data.fill_(0)
         self.fc.weight.data.normal_(0.0, 0.02)
         self.fc.bias.data.fill_(0)
         
@@ -327,33 +331,21 @@ class D(nn.Module):
         #print(out)
         #print(hidden)
         #print(hidden)
-        features = self.fc(features)
+        features = self.bn(self.fc(features))
+
         inputs = torch.cat((features.unsqueeze(1), hidden), 1)
 
         inputs = pack_padded_sequence(inputs, lengths, batch_first=True )
         hiddens, _ = self.gru(inputs)
 
-        #hiddens, batch_sizes = hiddens
-
-        # print(hiddens)
-
         hiddens = pad_packed_sequence(hiddens, batch_first=True)[0]
 
-        # print(hiddens)
-        # print(lengths)
-        # print(len(lengths))
-        # for i in range(len(lengths)):
-        #     print(i)
-        #     print(lengths[i])
         hiddens = torch.cat([ hiddens[ i, lengths[i] - 1 ].unsqueeze(0) for i in range( len(lengths) ) ], 0)
 
-        # print(hiddens)
-        x = self.relu(self.linear(self.dropout(hiddens)))
-        x = self.relu(self.linear2(x))
-        x = self.relu(self.linear3(x))
-        # outputs = self.linear(self.dropout(hiddens[:, -1, :]))
+        x = self.relu(self.bn2(self.linear(self.dropout(hiddens))))
+        x = self.relu(self.bn2(self.linear2(x)))
+        x = self.linear3(x)
 
-        # outputs = self.linear(self.dropout(hiddens[0]))
         return self.sigmoid(x)
     
     def sample(self, features, states):

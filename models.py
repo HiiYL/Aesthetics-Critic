@@ -161,24 +161,22 @@ class DecoderRNN(nn.Module):
     #     outputs = self.linear(hiddens[0])
     #     return outputs
         
-    def forward(self, features, captions, lengths, states, teacher_forced=True, use_random=True):
+    def forward(self, features, captions, lengths, states, teacher_forced=False):
         """Decode image feature vectors and generates captions."""
         features = self.bn(self.fc(features))
-        # return self.forward_forced(features, captions,lengths)
-        # teacher_forced = random.random() > 0.5 if use_random else teacher_forced
         if teacher_forced:
             return self.forward_forced_cell(features, captions,lengths, states)
         else:
             return self.forward_free_cell(features,lengths, states)
 
-    def forward_forced(self, features, captions, lengths):
-        """Decode image feature vectors and generates captions."""
-        embeddings = self.embed(captions)
-        embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
-        packed = pack_padded_sequence(embeddings, lengths, batch_first=True) 
-        hiddens, _ = self.lstm(packed)
-        outputs = self.linear(hiddens[0])
-        return outputs
+    # def forward_forced(self, features, captions, lengths):
+    #     """Decode image feature vectors and generates captions."""
+    #     embeddings = self.embed(captions)
+    #     embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
+    #     packed = pack_padded_sequence(embeddings, lengths, batch_first=True) 
+    #     hiddens, _ = self.lstm(packed)
+    #     outputs = self.linear(hiddens[0])
+    #     return outputs
 
     def forward_forced_cell(self, features, captions, lengths, states):
         embeddings = self.embed(captions)

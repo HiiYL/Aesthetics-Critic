@@ -44,7 +44,7 @@ def train(save_path, args):
                              shuffle=True, num_workers=args.num_workers) 
 
     # Build the models
-    encoder = EncoderCNN(args.embed_size, torch.load('data/net_model_epoch_10.pth').inception)
+    encoder = EncoderCNN(args.embed_size, models.inception_v3(pretrained=True))
     encoder.set_finetune(finetune=True)
 
     decoder = DecoderRNN(args.embed_size, args.hidden_size, 
@@ -102,11 +102,19 @@ def train(save_path, args):
             decoder.zero_grad()
             encoder.zero_grad()
             features = encoder(images)
-            outputs  = decoder(features, captions, lengths, state, teacher_forced=True)
+            use_teacher = True#(random.random() > 0.5)
+            outputs  = decoder(features, captions, lengths, state, teacher_forced=use_teacher)
 
             loss = 0
-            for i in range(outputs.size(0)):
-                loss += ( 0.9 ** ( i + 1 ) ) * criterion(outputs[i], targets[i])
+            # print(outputs.size(0))
+            # print(outputs)
+            sum_weights = 0
+            for idx in range(outputs.size(0)):
+                loss += (0.9 ** idx) * criterion(outputs[idx].view(1,-1), targets[idx])
+                sum_weights += (0.9 ** idx)
+
+            loss /= sum_weights
+
             # loss     = criterion(outputs, targets)
 
             loss.backward()
@@ -124,7 +132,7 @@ def train(save_path, args):
                 decoder.eval()
                 for parameter in decoder.parameters():
                     parameter.requires_grad=False
-                outputs  = decoder(features, captions, lengths, state, teacher_forced=False, use_random=False)
+                outputs  = decoder(features, captions, lengths, state, teacher_forced=False)
                 for parameter in decoder.parameters():
                     parameter.requires_grad=True
                 decoder.train()
@@ -208,7 +216,7 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained', type=str)#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
-    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--batch_size', type=int, default=2)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')
