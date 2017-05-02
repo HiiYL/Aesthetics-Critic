@@ -103,7 +103,11 @@ def train(save_path, args):
             encoder.zero_grad()
             features = encoder(images)
             outputs  = decoder(features, captions, lengths, state, teacher_forced=True)
-            loss     = criterion(outputs, targets)
+
+            loss = 0
+            for i in range(outputs.size(0)):
+                loss += ( 0.9 ** ( i + 1 ) ) * criterion(outputs[i], targets[i])
+            # loss     = criterion(outputs, targets)
 
             loss.backward()
             #torch.nn.utils.clip_grad_norm(decoder.parameters(), args.clip)

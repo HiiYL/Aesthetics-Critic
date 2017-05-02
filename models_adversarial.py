@@ -14,11 +14,6 @@ class EncoderCNN(nn.Module):
     def __init__(self, embed_size,inception):
         """Load the pretrained ResNet-152 and replace top fc layer."""
         super(EncoderCNN, self).__init__()
-#        self.resnet = models.resnet18(pretrained=True)
-#        for param in self.resnet.parameters():
-#            param.requires_grad = False
-#        self.resnet.fc = nn.Linear(self.resnet.fc.in_features, embed_size)
-#        self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
         self.aux_logits = False
         self.transform_input = False
         self.Conv2d_1a_3x3 = inception.Conv2d_1a_3x3
@@ -94,8 +89,6 @@ class EncoderCNN(nn.Module):
         # 2048
 
         return x
-
-
 
 class G(nn.Module):
     def __init__(self, embed_size, hidden_size, vocab, num_layers):
@@ -215,8 +208,6 @@ class G(nn.Module):
         hiddens, states = self.lstm(inputs, states)          # (batch_size, 1, hidden_size)
         outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
         confidences, best_choices = outputs.topk(n)
-
-
 
         cached_states = [states] * n
 
