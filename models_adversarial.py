@@ -102,47 +102,58 @@ class G(nn.Module):
         """Set the hyper-parameters and build the layers."""
         super(G, self).__init__()
 
-        self.max_length = 20
-
-
         self.vocab = vocab
         self.vocab_size = len(vocab)
 
         self.embed = nn.Embedding(self.vocab_size, embed_size)
-        # self.embed.weight = nn.Parameter(embeddings)
-
-        self.fc = nn.Linear(2048, embed_size)#inception.fc
-
-        self.hidden_size = hidden_size
-        self.gru_cell = nn.GRUCell(embed_size, hidden_size)
+        # self.lstm = nn.LSTM(embed_size, hidden_size, num_layers, batch_first=True)
         self.linear = nn.Linear(hidden_size, self.vocab_size)
 
-        self.log_softmax = nn.LogSoftmax()
+        
+
+        self.fc = nn.Linear(2048, embed_size)#inception.fc
+        self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
+
+        self.hidden_size = hidden_size
+        # self.gru = nn.GRU(embed_size, hidden_size, num_layers, batch_first=True, bidirectional=False)
+        
+        self.gru_cell = nn.GRUCell(embed_size, hidden_size)
+        
+        self.linear_fc = nn.Linear(hidden_size * 2, hidden_size)
 
         self.attn = nn.Linear( hidden_size * 2, hidden_size)
         self.attn_combine = nn.Linear( hidden_size * 2, hidden_size)
 
+        self.log_softmax = nn.LogSoftmax()
 
         self.init_weights()
     
     def init_weights(self):
         """Initialize weights."""
         self.embed.weight.data.uniform_(-0.1, 0.1)
+
         self.linear.weight.data.uniform_(-0.1, 0.1)
         self.linear.bias.data.fill_(0)
+
         self.fc.weight.data.normal_(0.0, 0.02)
         self.fc.bias.data.fill_(0)
+
+        self.attn.weight.data.normal_(0.0, 0.02)
+        self.attn.bias.data.fill_(0)
+
+        self.attn_combine.weight.data.normal_(0.0, 0.02)
+        self.attn_combine.bias.data.fill_(0)
         
-    def forward(self, features, captions, lengths, states, teacher_forced=False):
+    def forward(self, features, captions, lengths, states, teacher_forced=True):
         """Decode image feature vectors and generates captions."""
-        features = self.fc(features)
+        features = self.bn(self.fc(features))
         # return self.forward_forced(features, captions,lengths)
         if teacher_forced:
-            return self.forward_forced_cell(features, captions,lengths, states)
+            return self._forward_forced_cell(features, captions,lengths, states)
         else:
-            return self.forward_free_cell(features,lengths, states)
+            return self._forward_free_cell(features,lengths, states)
 
-    def forward_forced_cell(self, features, captions, lengths, states):
+    def _forward_forced_cell(self, features, captions, lengths, states):
         embeddings = self.embed(captions)
         embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
         hiddens_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
@@ -160,7 +171,7 @@ class G(nn.Module):
         outputs = self.linear(hiddens_tensor_packed)
         return self.log_softmax(outputs), hiddens_tensor
 
-    def forward_free_cell(self, features, lengths, states):
+    def _forward_free_cell(self, features, lengths, states):
         output_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.vocab_size))
         hiddens_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
 
@@ -185,25 +196,18 @@ class G(nn.Module):
     
     def sample(self, features, states):
         """Samples captions for given image features (Greedy search)."""
-        # sampled_ids = []
-        hiddens_list = []
+        features = self.bn(self.fc(features))
+
+        sampled_ids = []
         inputs = features.unsqueeze(1)
         for i in range(20):                                      # maximum sampling length
             hiddens, states = self.lstm(inputs, states)          # (batch_size, 1, hidden_size)
-            # outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
-            hiddens_list.append(hiddens)
-            # predicted = outputs.max(1)[1]
-            # sampled_ids.append(predicted)
-            inputs = hiddens
-            #inputs = self.embed(predicted)
-        # sampled_ids = torch.cat(sampled_ids, 1)                  # (batch_size, 20)
-        hiddens_list = torch.cat(hiddens_list, 1)
-
-        outputs = self.linear(hiddens_list[0])
-        # print(torch.max(outputs,1)[1])
-        # exit()
-        return torch.max(outputs,1)[1].squeeze()   #sampled_ids.squeeze()
-
+            outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
+            predicted = outputs.max(1)[1]
+            sampled_ids.append(predicted)
+            inputs = self.embed(predicted)
+        sampled_ids = torch.cat(sampled_ids, 1)                  # (batch_size, 20)
+        return sampled_ids.squeeze()
 
     def beamSearch(self, features, states, n=5):
         inputs = features.unsqueeze(1)

@@ -50,7 +50,6 @@ def train(save_path, args):
                              vocab, args.num_layers)
     netD = D(args.embed_size, args.hidden_size, 
                              vocab, args.num_layers)
-
     # if args.pretrained:
     #     encoder.load_state_dict(torch.load('models/encoder{}'.format(args.pretrained)))
     #     decoder.load_state_dict(torch.load('models/decoder{}'.format(args.pretrained)))
@@ -148,7 +147,7 @@ def train(save_path, args):
 
             if total_iterations % 100 == 0:
                 print()
-                sampled_ids = torch.max(out,1)[1].squeeze()
+                sampled_ids = torch.max(outputs_free,1)[1].squeeze()
                 sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
                 sampled_ids = sampled_ids.cpu().data.numpy()
 
@@ -199,7 +198,7 @@ if __name__ == '__main__':
                         help='path for saving trained models')
     parser.add_argument('--crop_size', type=int, default=299 ,
                         help='size for randomly cropping images')
-    parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
+    parser.add_argument('--vocab_path', type=str, default='data/vocab-aesthetics.pkl',
                         help='path for vocabulary wrapper')
     parser.add_argument('--dataset', type=str, default='aesthetics' ,
                         help='dataset to use')

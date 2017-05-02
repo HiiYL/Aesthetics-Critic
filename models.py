@@ -130,6 +130,8 @@ class DecoderRNN(nn.Module):
 
         self.log_softmax = nn.LogSoftmax()
 
+        self.relu = nn.ReLU()
+
         self.init_weights()
 
         
@@ -159,10 +161,11 @@ class DecoderRNN(nn.Module):
     #     outputs = self.linear(hiddens[0])
     #     return outputs
         
-    def forward(self, features, captions, lengths, states, teacher_forced=True):
+    def forward(self, features, captions, lengths, states, teacher_forced=True, use_random=True):
         """Decode image feature vectors and generates captions."""
         features = self.bn(self.fc(features))
         # return self.forward_forced(features, captions,lengths)
+        # teacher_forced = random.random() > 0.5 if use_random else teacher_forced
         if teacher_forced:
             return self.forward_forced_cell(features, captions,lengths, states)
         else:
@@ -187,7 +190,7 @@ class DecoderRNN(nn.Module):
 
             attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
             attn_applied = features * attn_weights
-            inputs = self.attn_combine(torch.cat((inputs, attn_applied ), 1))
+            inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
             
             hx = self.gru_cell(inputs, hx)
             hiddens_tensor[ :, i, :] = hx
@@ -203,7 +206,7 @@ class DecoderRNN(nn.Module):
         for i in range(lengths[0]):
             attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
             attn_applied = features * attn_weights
-            inputs = self.attn_combine(torch.cat((inputs, attn_applied ), 1))
+            inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
 
             hx = self.gru_cell(inputs, hx)
             out = self.linear(hx)
@@ -212,7 +215,7 @@ class DecoderRNN(nn.Module):
             inputs = self.embed(predicted).squeeze()
 
         output_tensor, _ = pack_padded_sequence(output_tensor, lengths, batch_first=True)
-        return output_tensor #self.log_softmax(output_tensor)
+        return self.log_softmax(output_tensor)
 
     def forward_free_hidden_cell(self, features, lengths, states):
         hiddens_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
@@ -235,7 +238,7 @@ class DecoderRNN(nn.Module):
         for i in range(20):
             attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
             attn_applied = features * attn_weights
-            inputs = self.attn_combine(torch.cat((inputs, attn_applied ), 1))
+            inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
 
             hx = self.gru_cell(inputs, hx)
             out = self.linear(hx)

@@ -44,7 +44,7 @@ def train(save_path, args):
                              shuffle=True, num_workers=args.num_workers) 
 
     # Build the models
-    encoder = EncoderCNN(args.embed_size, models.inception_v3(pretrained=True))#torch.load('data/net_model_epoch_10.pth').inception)
+    encoder = EncoderCNN(args.embed_size, torch.load('data/net_model_epoch_10.pth').inception)
     encoder.set_finetune(finetune=True)
 
     decoder = DecoderRNN(args.embed_size, args.hidden_size, 
@@ -102,7 +102,7 @@ def train(save_path, args):
             decoder.zero_grad()
             encoder.zero_grad()
             features = encoder(images)
-            outputs  = decoder(features, captions, lengths, state)
+            outputs  = decoder(features, captions, lengths, state, teacher_forced=True)
             loss     = criterion(outputs, targets)
 
             loss.backward()
@@ -117,6 +117,13 @@ def train(save_path, args):
 
             if total_iterations % 100 == 0:
                 print()
+                decoder.eval()
+                for parameter in decoder.parameters():
+                    parameter.requires_grad=False
+                outputs  = decoder(features, captions, lengths, state, teacher_forced=False, use_random=False)
+                for parameter in decoder.parameters():
+                    parameter.requires_grad=True
+                decoder.train()
                 sampled_ids = torch.max(outputs,1)[1].squeeze()
                 sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
                 sampled_ids = sampled_ids.cpu().data.numpy()
@@ -154,9 +161,9 @@ def train(save_path, args):
                                         'encoder-%d-%d.pkl' %(epoch+1, i+1)))
 
 
-            # if total_iterations % args.tb_log_step == 0:
-            #     log_value('Loss', loss.data[0], total_iterations)
-            #     log_value('Perplexity', np.exp(loss.data[0]), total_iterations)
+            if total_iterations % args.tb_log_step == 0:
+                log_value('Loss', loss.data[0], total_iterations)
+                log_value('Perplexity', np.exp(loss.data[0]), total_iterations)
 
             total_iterations += 1
 
@@ -168,7 +175,7 @@ if __name__ == '__main__':
                         help='path for saving trained models')
     parser.add_argument('--crop_size', type=int, default=299 ,
                         help='size for randomly cropping images')
-    parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
+    parser.add_argument('--vocab_path', type=str, default='data/vocab-aesthetics.pkl',
                         help='path for vocabulary wrapper')
     parser.add_argument('--dataset', type=str, default='aesthetics' ,
                         help='dataset to use')
@@ -216,5 +223,5 @@ if __name__ == '__main__':
     if not os.path.exists(save_path):
         os.mkdir(save_path)
 
-    # configure(save_path)
+    configure(save_path)
     train(save_path, args)
