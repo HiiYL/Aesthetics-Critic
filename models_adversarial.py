@@ -286,12 +286,16 @@ class D(nn.Module):
         super(D, self).__init__()
 
         self.gru = nn.GRU(embed_size, hidden_size, num_layers,dropout=0.5, batch_first=True, bidirectional=True)
-        self.linear = nn.Linear(hidden_size + hidden_size, 1)
+        self.linear = nn.Linear(hidden_size + hidden_size, hidden_size + hidden_size)
+        self.linear2 = nn.Linear(hidden_size + hidden_size, hidden_size + hidden_size)
+        self.linear3 = nn.Linear(hidden_size + hidden_size, 1)
 
         self.fc = nn.Linear(2048, embed_size)
 
         self.dropout = nn.Dropout(0.5)
         self.sigmoid = nn.Sigmoid()
+
+        self.relu = nn.ReLU()
 
         self.init_weights()
     
@@ -344,11 +348,13 @@ class D(nn.Module):
         hiddens = torch.cat([ hiddens[ i, lengths[i] - 1 ].unsqueeze(0) for i in range( len(lengths) ) ], 0)
 
         # print(hiddens)
-        outputs = self.linear(self.dropout(hiddens))
+        x = self.relu(self.linear(self.dropout(hiddens)))
+        x = self.relu(self.linear2(x))
+        x = self.relu(self.linear3(x))
         # outputs = self.linear(self.dropout(hiddens[:, -1, :]))
 
         # outputs = self.linear(self.dropout(hiddens[0]))
-        return self.sigmoid(outputs)
+        return self.sigmoid(x)
     
     def sample(self, features, states):
         """Samples captions for given image features (Greedy search)."""
