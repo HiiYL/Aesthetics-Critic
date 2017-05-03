@@ -52,9 +52,9 @@ def train(save_path, args):
     encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True))
     netG = G(args.embed_size, args.hidden_size, vocab, args.num_layers)
     netD = D(args.embed_size, args.hidden_size, vocab, args.num_layers)
-    # if args.pretrained:
+    if args.pretrained:
     #     encoder.load_state_dict(torch.load('models/encoder{}'.format(args.pretrained)))
-    #     decoder.load_state_dict(torch.load('models/decoder{}'.format(args.pretrained)))
+        netG.load_state_dict(torch.load(args.pretrained))
 
     label_real, label_fake = torch.FloatTensor(args.batch_size), torch.FloatTensor(args.batch_size)
     real_label = 1
@@ -106,19 +106,18 @@ def train(save_path, args):
 
             targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
 
-            # Forward, Backward and Optimize
             netG.zero_grad()
             netD.zero_grad()
             features = encoder(images).detach()
             out, hidden, embeddings   = netG(features, captions, lengths, state, teacher_forced=True)
             outputs_free, hidden_free = netG(features, captions, lengths, state, teacher_forced=False)
 
-            #print("real...")
+
+            ## Discriminator Step
             output_real      = netD(hidden.detach(),embeddings.detach(), lengths)
             label_real.data.resize_(output_real.size()).fill_(real_label)
             D_loss_real = criterion_bce(output_real, label_real)
             
-            #print("fake...")
             output_fake      = netD(hidden_free.detach(),embeddings.detach(), lengths)
             label_fake.data.resize_(output_fake.size()).fill_(fake_label)
             D_loss_fake = criterion_bce(output_fake, label_fake)
@@ -133,6 +132,8 @@ def train(save_path, args):
                 D_loss.backward()
                 optimizerD.step()
 
+
+            ## Generator Step
             for p in netD.parameters():
                 p.requires_grad = False # to avoid computation
             netG.zero_grad()
@@ -310,7 +311,7 @@ if __name__ == '__main__':
                         help='dimension of gru hidden states')
     parser.add_argument('--num_layers', type=int , default=1 ,
                         help='number of layers in gru')
-    parser.add_argument('--pretrained', type=str)#, default='-2-20000.pkl')
+    parser.add_argument('--pretrained', type=str, default='logs/coco/03052017180131/decoder-1-20000.pkl')#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=16)

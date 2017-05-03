@@ -14,7 +14,7 @@ import numpy as np
 import os
 from data_loader import get_loader 
 from build_vocab import Vocabulary
-from models import EncoderCNN, DecoderRNN,InceptionNet
+from models_adversarial import EncoderCNN, G,InceptionNet
 import pickle
 import datetime
 
@@ -47,7 +47,7 @@ def train(save_path, args):
     encoder = EncoderCNN(args.embed_size, models.inception_v3(pretrained=True))
     encoder.set_finetune(finetune=True)
 
-    decoder = DecoderRNN(args.embed_size, args.hidden_size, 
+    decoder = G(args.embed_size, args.hidden_size, 
                              vocab, args.num_layers)
 
     if args.pretrained:

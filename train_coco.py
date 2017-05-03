@@ -14,7 +14,7 @@ import numpy as np
 import os
 from data_loader_coco import get_loader 
 from build_vocab import Vocabulary
-from models import EncoderCNN, DecoderRNN#,InceptionNet
+from models_adversarial import EncoderCNN, G#,InceptionNet
 import pickle
 import datetime
 
@@ -51,7 +51,7 @@ def train(save_path, args):
     encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True))
     #encoder.set_finetune(finetune=False)
 
-    decoder = DecoderRNN(args.embed_size, args.hidden_size, 
+    decoder = G(args.embed_size, args.hidden_size, 
                              vocab, args.num_layers)
 
     if args.pretrained:
@@ -113,7 +113,7 @@ def train(save_path, args):
             decoder.zero_grad()
             encoder.zero_grad()
             features = encoder(images)
-            outputs  = decoder(features, captions, lengths, state)
+            outputs, _, _  = decoder(features, captions, lengths, state, teacher_forced=True)
             loss     = criterion(outputs, targets)
 
             loss.backward()
@@ -130,7 +130,7 @@ def train(save_path, args):
                 decoder.eval()
                 for parameter in decoder.parameters():
                     parameter.requires_grad=False
-                outputs  = decoder(features, captions, lengths, state, teacher_forced=False, use_random=False)
+                outputs, _  = decoder(features, captions, lengths, state, teacher_forced=False)
                 for parameter in decoder.parameters():
                     parameter.requires_grad=True
                 decoder.train()
@@ -161,14 +161,11 @@ def train(save_path, args):
                     print(sentence)
                     print()
 
-            # Save the model
-            # if (total_iterations+1) % args.save_step == 0:
-            #     torch.save(decoder.state_dict(), 
-            #                os.path.join(save_path, 
-            #                             'decoder-%d-%d.pkl' %(epoch+1, i+1)))
-            #     torch.save(encoder.state_dict(), 
-            #                os.path.join(save_path, 
-            #                             'encoder-%d-%d.pkl' %(epoch+1, i+1)))
+            #Save the model
+            if (total_iterations+1) % args.save_step == 0:
+                torch.save(decoder.state_dict(), 
+                           os.path.join(save_path, 
+                                        'decoder-%d-%d.pkl' %(epoch+1, i+1)))
 
 
             if total_iterations % args.tb_log_step == 0:
@@ -203,7 +200,7 @@ def train(save_path, args):
             decoder.zero_grad()
             encoder.zero_grad()
             features = encoder(images)
-            outputs  = decoder(features, captions, lengths, state, teacher_forced=False, use_random=False)
+            outputs,_  = decoder(features, captions, lengths, state, teacher_forced=False)
             sampled_ids = torch.max(outputs,1)[1].squeeze()
             sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
             sampled_ids = sampled_ids.cpu().data.numpy()
