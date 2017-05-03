@@ -80,12 +80,12 @@ class EncoderCNN(nn.Module):
         # 8 x 8 x 2048
         x = self.Mixed_7c(x)
         # 8 x 8 x 2048
-        x = F.avg_pool2d(x, kernel_size=x.size()[2:])
+        #x = F.avg_pool2d(x, kernel_size=x.size()[2:])
 
         # 1 x 1 x 2048
         x = F.dropout(x, training=self.training)
         # 1 x 1 x 2048
-        x = x.view(x.size(0), -1)
+        # x = x.view(x.size(0), -1)
         # 2048
 
         return x
@@ -101,6 +101,7 @@ class G(nn.Module):
         self.embed = nn.Embedding(self.vocab_size, embed_size)
         self.linear = nn.Linear(hidden_size, self.vocab_size)
 
+        self.conv = nn.Conv2d(2048, 32, kernel_size=3, stride=1, padding=1)
         self.fc = nn.Linear(2048, embed_size)
         self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
 
@@ -136,6 +137,8 @@ class G(nn.Module):
         
     def forward(self, features, captions, lengths, states, teacher_forced=True):
         """Decode image feature vectors and generates captions."""
+        features = self.conv(features)
+        features = features.view(features.size(0), -1)
         features = self.bn(self.fc(features))
         # return self.forward_forced(features, captions,lengths)
         if teacher_forced:
@@ -159,7 +162,7 @@ class G(nn.Module):
 
         hiddens_tensor_packed, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
         outputs = self.linear(hiddens_tensor_packed)
-        return self.log_softmax(outputs), hiddens_tensor
+        return self.log_softmax(outputs), hiddens_tensor, embeddings
 
     def _forward_free_cell(self, features, lengths, states):
         output_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.vocab_size))
@@ -282,18 +285,24 @@ class D(nn.Module):
         """Set the hyper-parameters and build the layers."""
         super(D, self).__init__()
 
-        self.gru = nn.GRU(embed_size, hidden_size, num_layers,dropout=0.5, batch_first=True, bidirectional=True)
-        self.linear = nn.Linear(hidden_size + hidden_size, hidden_size + hidden_size)
-        self.linear2 = nn.Linear(hidden_size + hidden_size, hidden_size + hidden_size)
-        self.linear3 = nn.Linear(hidden_size + hidden_size, 1)
+        gru_embed_size = embed_size * 2
+        fc_embed_size = gru_embed_size * 2
 
-        self.fc = nn.Linear(2048, embed_size)
+        self.gru = nn.GRU(gru_embed_size, gru_embed_size, num_layers,dropout=0.5, batch_first=True, bidirectional=True)
+
+
+        self.linear = nn.Linear(fc_embed_size, fc_embed_size)
+        self.linear2 = nn.Linear(fc_embed_size, fc_embed_size)
+        self.linear3 = nn.Linear(fc_embed_size, 1)
+
+
+        #self.fc = nn.Linear(2048, embed_size)
 
         self.dropout = nn.Dropout(0.5)
         self.sigmoid = nn.Sigmoid()
 
-        self.bn2 = nn.BatchNorm1d(hidden_size + hidden_size, momentum=0.01)
-        self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
+        self.bn2 = nn.BatchNorm1d(fc_embed_size, momentum=0.01)
+        #self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
 
         self.relu = nn.ReLU()
 
@@ -304,62 +313,32 @@ class D(nn.Module):
         #self.embed.weight.data.uniform_(-0.1, 0.1)
         self.linear.weight.data.uniform_(-0.1, 0.1)
         self.linear.bias.data.fill_(0)
+
         self.linear2.weight.data.uniform_(-0.1, 0.1)
         self.linear2.bias.data.fill_(0)
+
         self.linear3.weight.data.uniform_(-0.1, 0.1)
         self.linear3.bias.data.fill_(0)
-        self.fc.weight.data.normal_(0.0, 0.02)
-        self.fc.bias.data.fill_(0)
-        
-    def forward(self, features, hidden, lengths):
-        """Decode image feature vectors and generates captions."""
-        #features = self.fc(features)
-        # print(captions)
-        # print(features)
-        # print(captions)
+        #self.fc.weight.data.normal_(0.0, 0.02)
+        #self.fc.bias.data.fill_(0)
 
-        ## out    - n_tokens x len(vocab)
-        ## hidden - n_token x 512
-        
+    def forward(self, hidden, embeddings,lengths):
+        """Discriminate feature vectors generated via teacher forcing and free running."""
 
-        #embeddings = self.dropout(self.embed(captions))
-        #embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
-        #packed = pack_padded_sequence(embeddings, lengths, batch_first=True)
-        #print(out)
-        #out = self.linear2(out)
-
-        #print(out)
-        #print(hidden)
-        #print(hidden)
-        features = self.bn(self.fc(features))
-
-        inputs = torch.cat((features.unsqueeze(1), hidden), 1)
-
-        inputs = pack_padded_sequence(inputs, lengths, batch_first=True )
+        ## only get embeddings up to the second last word as the last word is not used for teaching
+        hidden = torch.cat((hidden, embeddings[:,:-1,:]),2)
+        inputs = pack_padded_sequence(hidden, lengths, batch_first=True )
         hiddens, _ = self.gru(inputs)
 
         hiddens = pad_packed_sequence(hiddens, batch_first=True)[0]
 
-        hiddens = torch.cat([ hiddens[ i, lengths[i] - 1 ].unsqueeze(0) for i in range( len(lengths) ) ], 0)
+        x = torch.cat([ hiddens[ i, lengths[i] - 1 ].unsqueeze(0) for i in range( len(lengths) ) ], 0)
 
-        x = self.relu(self.bn2(self.linear(self.dropout(hiddens))))
+        x = self.relu(self.bn2(self.linear(x)))
         x = self.relu(self.bn2(self.linear2(x)))
         x = self.linear3(x)
 
         return self.sigmoid(x)
-    
-    def sample(self, features, states):
-        """Samples captions for given image features (Greedy search)."""
-        sampled_ids = []
-        inputs = features.unsqueeze(1)
-        for i in range(20):                                      # maximum sampling length
-            hiddens, states = self.gru(inputs, states)          # (batch_size, 1, hidden_size)
-            outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
-            predicted = outputs.max(1)[1]
-            sampled_ids.append(predicted)
-            inputs = self.embed(predicted)
-        sampled_ids = torch.cat(sampled_ids, 1)                  # (batch_size, 20)
-        return sampled_ids.squeeze()
 
 
 class InceptionNet(nn.Module):

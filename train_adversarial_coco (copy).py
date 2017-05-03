@@ -6,17 +6,20 @@ import torch.nn as nn
 import torch.backends.cudnn as cudnn
 from torch.autograd import Variable 
 from torch.nn.utils.rnn import pack_padded_sequence,pad_packed_sequence
-from torchvision import transforms, models
+from torchvision import transforms
+from torchvision import models
 
 cudnn.benchmark = True
 
 import numpy as np
 import os
-from data_loader import get_loader 
+from data_loader_coco import get_loader 
 from build_vocab import Vocabulary
 from models_adversarial import EncoderCNN, G,D, InceptionNet
 import pickle
 import datetime
+
+import json
 
 from tensorboard_logger import configure, log_value
 
@@ -27,7 +30,8 @@ def train(save_path, args):
     
     # Image preprocessing
     transform = transforms.Compose([
-        transforms.RandomCrop(args.crop_size),
+        transforms.Scale(299),
+        transforms.RandomCrop(299),
         transforms.RandomHorizontalFlip(), 
         transforms.ToTensor(), 
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
@@ -37,19 +41,21 @@ def train(save_path, args):
         vocab = pickle.load(f)
     
 
-    training_location = "data/{}/train".format(args.dataset)
-    # Build data loader
-    data_loader = get_loader(training_location, args.comments_path, vocab, 
+    train_data_loader = get_loader("train", vocab, 
                              transform, args.batch_size,
-                             shuffle=True, num_workers=args.num_workers) 
+                             shuffle=True, num_workers=args.num_workers)
+    val_data_loader = get_loader("val", vocab, 
+                             transform, args.batch_size,
+                             shuffle=False, num_workers=args.num_workers)
 
     # Build the models
-    encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True)) #torch.load('data/net_model_epoch_10.pth').inception)
+    encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True))
+    netG = G(args.embed_size, args.hidden_size, vocab, args.num_layers)
+    netD = D(args.embed_size, args.hidden_size, vocab, args.num_layers)
 
-    netG = G(args.embed_size, args.hidden_size, 
-                             vocab, args.num_layers)
-    netD = D(args.embed_size, args.hidden_size, 
-                             vocab, args.num_layers)
+    # print(encoder)
+    # print(netG)
+    # print(netD)
     # if args.pretrained:
     #     encoder.load_state_dict(torch.load('models/encoder{}'.format(args.pretrained)))
     #     decoder.load_state_dict(torch.load('models/decoder{}'.format(args.pretrained)))
@@ -66,9 +72,9 @@ def train(save_path, args):
      Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)))
 
     if torch.cuda.is_available():
+        encoder = encoder.cuda()
         netG.cuda()
         netD.cuda()
-        encoder.cuda()
         state = [s.cuda() for s in state]
         label_real, label_fake = label_real.cuda(), label_fake.cuda()
         criterion_bce = criterion_bce.cuda()
@@ -79,11 +85,9 @@ def train(save_path, args):
     # optimizerE = torch.optim.Adam(encoder.parameters(), lr= 0.1 *args.learning_rate)
     optimizerG = torch.optim.Adam(netG.parameters(), lr=args.learning_rate)
     optimizerD = torch.optim.Adam(netD.parameters(), lr=args.learning_rate)
-    # optimizerE = torch.optim.Adam(encoder.parameters(), lr= 0.1 * args.learning_rate)
-
 
     # Train the Models
-    total_step = len(data_loader)
+    total_step = len(train_data_loader)
 
     total_iterations = 0
 
@@ -93,7 +97,7 @@ def train(save_path, args):
         #     for param_group in optimizer.param_groups:
         #         param_group['lr'] = lr
 
-        for i, (images, captions, lengths) in enumerate(data_loader):
+        for i, (images, captions, lengths, img_id) in enumerate(train_data_loader):
             for p in netD.parameters():  # reset require_grad
                 p.requires_grad = True   # they are set to False below in netG update
             
@@ -110,11 +114,11 @@ def train(save_path, args):
             netG.zero_grad()
             netD.zero_grad()
             features = encoder(images).detach()
-            out, hidden               = netG(features, captions, lengths, state, teacher_forced=True)
-            outputs_free, hidden_free = netG(features, captions, lengths, state, teacher_forced=False)
+            G_forced, hidden_forced, embeddings = netG(features, captions, lengths, state, teacher_forced=True)
+            G_free  , hidden_free               = netG(features, captions, lengths, state, teacher_forced=False)
 
             #print("real...")
-            output_real      = netD(hidden.detach(), lengths)
+            output_real      = netD(hidden_forced.detach(), lengths)
             label_real.data.resize_(output_real.size()).fill_(real_label)
             D_loss_real = criterion_bce(output_real, label_real)
             
@@ -124,14 +128,10 @@ def train(save_path, args):
             label_fake.data.resize_(output_fake.size()).fill_(fake_label)
             D_loss_fake = criterion_bce(output_fake, label_fake)
             
-            
-            # print(output_real.data)
-            # print((output_real.data >= 0.5).sum())
             total = len(label_real)
             correct_real = (output_real.data >= 0.5).sum() / total
             correct_fake = (output_fake.data < 0.5).sum() / total
             D_accuracy = 0.5 * ( correct_real + correct_fake )
-            #print("%.4f -> %.4f - %.4f" %(D_accuracy, correct_real, correct_fake))
             D_loss = D_loss_real + D_loss_fake
 
             if not D_accuracy > 0.99:
@@ -143,20 +143,14 @@ def train(save_path, args):
                 p.requires_grad = False # to avoid computation
             netG.zero_grad()
 
-            output_free = netD(hidden_free, lengths)
-            #label_real.data.resize_(output.size()).fill_(real_label)
-            gan_loss_fake = criterion_bce(output_free, label_real)
-
-            output_forced = netD(hidden, lengths)
-            gan_loss_real = criterion_bce(output_forced, label_fake)
-
-            mle_loss = criterion(out, targets)
+            output = netD(hidden_free, lengths)
+            gan_loss = criterion_bce(output, label_real)
+            mle_loss = criterion(G_free, targets)
 
             if D_accuracy > 0.75:
-                G_loss = mle_loss + gan_loss_fake + gan_loss_real
+                G_loss = mle_loss + gan_loss
             else:
                 G_loss = mle_loss
-
             G_loss.backward()
             optimizerG.step()
 
@@ -168,11 +162,11 @@ def train(save_path, args):
 
             if total_iterations % 100 == 0:
                 print()
-                sampled_ids_free = torch.max(outputs_free,1)[1].squeeze()
+                sampled_ids_free = torch.max(G_free,1)[1].squeeze()
                 sampled_ids_free = pad_packed_sequence([sampled_ids_free, batch_sizes], batch_first=True)[0]
                 sampled_ids_free = sampled_ids_free.cpu().data.numpy()
 
-                sampled_ids_forced = torch.max(out,1)[1].squeeze()
+                sampled_ids_forced = torch.max(G_forced,1)[1].squeeze()
                 sampled_ids_forced = pad_packed_sequence([sampled_ids_forced, batch_sizes], batch_first=True)[0]
                 sampled_ids_forced = sampled_ids_forced.cpu().data.numpy()
 
@@ -228,6 +222,66 @@ def train(save_path, args):
             total_iterations += 1
 
 
+        print('validating...')
+        netG.eval()
+        encoder.eval()
+
+        for parameter in encoder.parameters():
+            parameter.requires_grad=False
+        for parameter in netG.parameters():
+            parameter.requires_grad=False
+
+        val_json = []
+        total_val_step = len(val_data_loader)
+        for i, (images, captions, lengths, img_id) in enumerate(val_data_loader):
+            images = Variable(images, volatile=True)
+            captions = Variable(captions, volatile=True)
+            if torch.cuda.is_available():
+                images = images.cuda()
+                captions = captions.cuda()
+            targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
+
+            # Forward, Backward and Optimize
+            features = encoder(images)
+            outputs, _ = netG(features, captions, lengths, state, teacher_forced=False)
+            sampled_ids = torch.max(outputs,1)[1].squeeze()
+            sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
+            sampled_ids = sampled_ids.cpu().data.numpy()
+            loss        = criterion(outputs, targets)
+
+            for j, comment in enumerate(sampled_ids):
+                sampled_caption = []
+                for word_id in comment:
+                    word = vocab.idx2word[word_id]
+                    if word == '<end>':
+                        break
+                    if word != '<start>' and word != '<pad>':
+                        sampled_caption.append(word)
+
+                item_json = {"image_id": img_id[j], "caption":' '.join(sampled_caption) }
+                val_json.append(item_json)
+
+            # Print log info
+            if i % args.log_step == 0:
+               print('[%d/%d] - Running model on validation set.... | Loss: %.4f | Perplexity: %5.4f'
+                     %(i, total_val_step, 
+                       loss.data[0], np.exp(loss.data[0])))
+
+        with open('captions_val2014_fakecap_results.json', 'w') as outfile:
+            json.dump(val_json, outfile)
+
+        netG.train()
+        encoder.train()
+        for parameter in encoder.parameters():
+            parameter.requires_grad=True
+        for parameter in netG.parameters():
+            parameter.requires_grad=True
+
+
+
+            
+
+
                 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -235,9 +289,9 @@ if __name__ == '__main__':
                         help='path for saving trained models')
     parser.add_argument('--crop_size', type=int, default=299 ,
                         help='size for randomly cropping images')
-    parser.add_argument('--vocab_path', type=str, default='data/vocab-aesthetics.pkl',
+    parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
                         help='path for vocabulary wrapper')
-    parser.add_argument('--dataset', type=str, default='aesthetics' ,
+    parser.add_argument('--dataset', type=str, default='coco' ,
                         help='dataset to use')
     parser.add_argument('--comments_path', type=str,
                         default='data/labels.h5',
@@ -249,7 +303,7 @@ if __name__ == '__main__':
     #                     help='path for train annotation json file')
     parser.add_argument('--log_step', type=int , default=10,
                         help='step size for prining log info')
-    parser.add_argument('--tb_log_step', type=int , default=10,
+    parser.add_argument('--tb_log_step', type=int , default=100,
                         help='step size for prining log info')
     parser.add_argument('--save_step', type=int , default=10000,
                         help='step size for saving trained models')
@@ -258,9 +312,9 @@ if __name__ == '__main__':
     parser.add_argument('--embed_size', type=int , default=512 ,
                         help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int , default=512 ,
-                        help='dimension of lstm hidden states')
+                        help='dimension of gru hidden states')
     parser.add_argument('--num_layers', type=int , default=1 ,
-                        help='number of layers in lstm')
+                        help='number of layers in gru')
     parser.add_argument('--pretrained', type=str)#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)

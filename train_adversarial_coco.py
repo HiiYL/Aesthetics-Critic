@@ -50,11 +50,8 @@ def train(save_path, args):
 
     # Build the models
     encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True))
-
-    netG = G(args.embed_size, args.hidden_size, 
-                             vocab, args.num_layers)
-    netD = D(args.embed_size, args.hidden_size, 
-                             vocab, args.num_layers)
+    netG = G(args.embed_size, args.hidden_size, vocab, args.num_layers)
+    netD = D(args.embed_size, args.hidden_size, vocab, args.num_layers)
     # if args.pretrained:
     #     encoder.load_state_dict(torch.load('models/encoder{}'.format(args.pretrained)))
     #     decoder.load_state_dict(torch.load('models/decoder{}'.format(args.pretrained)))
@@ -113,49 +110,43 @@ def train(save_path, args):
             netG.zero_grad()
             netD.zero_grad()
             features = encoder(images).detach()
-            out, hidden               = netG(features, captions, lengths, state, teacher_forced=True)
+            out, hidden, embeddings   = netG(features, captions, lengths, state, teacher_forced=True)
             outputs_free, hidden_free = netG(features, captions, lengths, state, teacher_forced=False)
 
             #print("real...")
-            output_real      = netD(features, hidden.detach(), lengths)
+            output_real      = netD(hidden.detach(),embeddings.detach(), lengths)
             label_real.data.resize_(output_real.size()).fill_(real_label)
             D_loss_real = criterion_bce(output_real, label_real)
             
-
             #print("fake...")
-            output_fake      = netD(features, hidden_free.detach(), lengths)
+            output_fake      = netD(hidden_free.detach(),embeddings.detach(), lengths)
             label_fake.data.resize_(output_fake.size()).fill_(fake_label)
             D_loss_fake = criterion_bce(output_fake, label_fake)
             
-            
-            # print(output_real.data)
-            # print((output_real.data >= 0.5).sum())
             total = len(label_real)
             correct_real = (output_real.data >= 0.5).sum() / total
             correct_fake = (output_fake.data < 0.5).sum() / total
             D_accuracy = 0.5 * ( correct_real + correct_fake )
-            #print("%.4f -> %.4f - %.4f" %(D_accuracy, correct_real, correct_fake))
             D_loss = D_loss_real + D_loss_fake
 
             if not D_accuracy > 0.99:
-                D_loss_real.backward()
-                D_loss_fake.backward()
+                D_loss.backward()
                 optimizerD.step()
 
             for p in netD.parameters():
                 p.requires_grad = False # to avoid computation
             netG.zero_grad()
 
-            output = netD(features, hidden_free, lengths)
-            label_real.data.resize_(output.size()).fill_(real_label)
-            gan_loss = criterion_bce(output, label_real)
+            output_free = netD(hidden_free, embeddings, lengths)
+            gan_loss_fake = criterion_bce(output_free, label_real)
+
             mle_loss = criterion(out, targets)
 
-            mle_loss.backward()
             if D_accuracy > 0.75:
-                gan_loss.backward()
-            G_loss = mle_loss + gan_loss
-            #G_loss.backward()
+                G_loss = mle_loss + gan_loss_fake #+ gan_loss_real
+            else:
+                G_loss = mle_loss
+            G_loss.backward()
             optimizerG.step()
 
             # Print log info
@@ -166,22 +157,17 @@ def train(save_path, args):
 
             if total_iterations % 100 == 0:
                 print()
-                sampled_ids = torch.max(outputs_free,1)[1].squeeze()
-                sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
-                sampled_ids = sampled_ids.cpu().data.numpy()
+                sampled_ids_free = torch.max(outputs_free,1)[1].squeeze()
+                sampled_ids_free = pad_packed_sequence([sampled_ids_free, batch_sizes], batch_first=True)[0]
+                sampled_ids_free = sampled_ids_free.cpu().data.numpy()
 
-                for i, comment in enumerate(sampled_ids):
+                sampled_ids_forced = torch.max(out,1)[1].squeeze()
+                sampled_ids_forced = pad_packed_sequence([sampled_ids_forced, batch_sizes], batch_first=True)[0]
+                sampled_ids_forced = sampled_ids_forced.cpu().data.numpy()
+
+                for i, comment in enumerate(sampled_ids_free):
                     if i > 1:
                         break
-                    sampled_caption = []
-                    for word_id in comment:
-                        word = vocab.idx2word[word_id]
-                        sampled_caption.append(word)
-                        if word == '<end>':
-                            break
-                    sentence = "[P]" + ' '.join(sampled_caption)
-                    print(sentence)
-
                     sampled_caption = []
                     sample = captions.cpu().data.numpy()
                     for word_id in sample[i]:
@@ -189,17 +175,39 @@ def train(save_path, args):
                         sampled_caption.append(word)
                         if word == '<end>':
                             break
-                    sentence = "[S]" + ' '.join(sampled_caption)
+                    sentence = "[G]" + ' '.join(sampled_caption)
                     print(sentence)
+
+                    sampled_caption = []
+                    for word_id in sampled_ids_forced[i]:
+                        word = vocab.idx2word[word_id]
+                        sampled_caption.append(word)
+                        if word == '<end>':
+                            break
+                    sentence = "[T]" + ' '.join(sampled_caption)
+                    print(sentence)
+
+                    sampled_caption = []
+                    for word_id in comment:
+                        word = vocab.idx2word[word_id]
+                        sampled_caption.append(word)
+                        if word == '<end>':
+                            break
+                    sentence = "[F]" + ' '.join(sampled_caption)
+                    print(sentence)
+
                     print()
             # Save the model
             if (total_iterations+1) % args.save_step == 0:
-                torch.save(decoder.state_dict(), 
-                           os.path.join(save_path, 
-                                        'decoder-%d-%d.pkl' %(epoch+1, i+1)))
                 torch.save(encoder.state_dict(), 
                            os.path.join(save_path, 
                                         'encoder-%d-%d.pkl' %(epoch+1, i+1)))
+                torch.save(netG.state_dict(), 
+                           os.path.join(save_path, 
+                                        'netG-%d-%d.pkl' %(epoch+1, i+1)))
+                torch.save(netD.state_dict(), 
+                           os.path.join(save_path, 
+                                        'netD-%d-%d.pkl' %(epoch+1, i+1)))
 
 
             if total_iterations % args.tb_log_step == 0:
@@ -276,7 +284,7 @@ if __name__ == '__main__':
                         help='path for saving trained models')
     parser.add_argument('--crop_size', type=int, default=299 ,
                         help='size for randomly cropping images')
-    parser.add_argument('--vocab_path', type=str, default='data/vocab-aesthetics.pkl',
+    parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
                         help='path for vocabulary wrapper')
     parser.add_argument('--dataset', type=str, default='coco' ,
                         help='dataset to use')
@@ -299,9 +307,9 @@ if __name__ == '__main__':
     parser.add_argument('--embed_size', type=int , default=512 ,
                         help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int , default=512 ,
-                        help='dimension of lstm hidden states')
+                        help='dimension of gru hidden states')
     parser.add_argument('--num_layers', type=int , default=1 ,
-                        help='number of layers in lstm')
+                        help='number of layers in gru')
     parser.add_argument('--pretrained', type=str)#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
