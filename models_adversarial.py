@@ -5,7 +5,7 @@ import numpy as np
 from torch.autograd import Variable
 import math
 import torch.utils.model_zoo as model_zoo
-from torch.nn.utils.rnn import pack_padded_sequence,pad_packed_sequence
+from torch.nn.utils.rnn import pack_padded_sequence,pad_packed_sequence,PackedSequence
 import torchvision.models as models
 import os
 import torch.nn.functional as F
@@ -101,6 +101,7 @@ class G(nn.Module):
         self.embed = nn.Embedding(self.vocab_size, embed_size)
         self.linear = nn.Linear(hidden_size, self.vocab_size)
 
+        self.adaptive_pool = nn.AdaptiveMaxPool2d((8,8))
         self.conv = nn.Conv2d(2048, 32, kernel_size=3, stride=1, padding=1)
         self.fc = nn.Linear(2048, embed_size)
         self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
@@ -137,6 +138,7 @@ class G(nn.Module):
         
     def forward(self, features, captions, lengths, states, teacher_forced=True):
         """Decode image feature vectors and generates captions."""
+        features = self.adaptive_pool(features)
         features = self.conv(features)
         features = features.view(features.size(0), -1)
         features = self.bn(self.fc(features))
@@ -153,6 +155,8 @@ class G(nn.Module):
         hx = states[0].squeeze()
         for i in range(lengths[0]):
             inputs = embeddings[:,i,:]
+            if hx.data.size(0) > inputs.data.size(0):
+                hx = hx[:inputs.size(0)]
             attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
             attn_applied = features * attn_weights
             inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
@@ -171,6 +175,8 @@ class G(nn.Module):
         inputs = features
         hx = states[0].squeeze()
         for i in range(lengths[0]):
+            if hx.data.size(0) > inputs.data.size(0):
+                hx = hx[:inputs.size(0)]
             attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
             attn_applied = features * attn_weights
             inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
@@ -285,7 +291,7 @@ class D(nn.Module):
         """Set the hyper-parameters and build the layers."""
         super(D, self).__init__()
 
-        gru_embed_size = embed_size * 2
+        gru_embed_size = embed_size
         fc_embed_size = gru_embed_size * 2
 
         self.gru = nn.GRU(gru_embed_size, gru_embed_size, num_layers,dropout=0.5, batch_first=True, bidirectional=True)
@@ -294,6 +300,13 @@ class D(nn.Module):
         self.linear = nn.Linear(fc_embed_size, fc_embed_size)
         self.linear2 = nn.Linear(fc_embed_size, fc_embed_size)
         self.linear3 = nn.Linear(fc_embed_size, 1)
+
+
+
+        self.fc = nn.Linear(len(vocab), gru_embed_size)
+        self.embed = nn.Embedding(len(vocab), gru_embed_size)
+
+        self.fc.weights = self.embed.weight
 
 
         #self.fc = nn.Linear(2048, embed_size)
@@ -319,17 +332,46 @@ class D(nn.Module):
 
         self.linear3.weight.data.uniform_(-0.1, 0.1)
         self.linear3.bias.data.fill_(0)
+
+        self.fc.weight.data.uniform_(-0.1, 0.1)
+        self.fc.bias.data.fill_(0)
         #self.fc.weight.data.normal_(0.0, 0.02)
         #self.fc.bias.data.fill_(0)
 
-    def forward(self, hidden, embeddings,lengths):
+    # def forward(self, hidden, embeddings,lengths):
+    #     """Discriminate feature vectors generated via teacher forcing and free running."""
+
+    #     ## only get embeddings up to the second last word as the last word is not used for teaching
+    #     hidden = torch.cat((hidden, embeddings[:,:-1,:]),2)
+    #     inputs = pack_padded_sequence(hidden, lengths, batch_first=True )
+    #     hiddens, _ = self.gru(inputs)
+
+    #     hiddens = pad_packed_sequence(hiddens, batch_first=True)[0]
+
+    #     x = torch.cat([ hiddens[ i, lengths[i] - 1 ].unsqueeze(0) for i in range( len(lengths) ) ], 0)
+
+    #     x = self.relu(self.bn2(self.linear(x)))
+    #     x = self.relu(self.bn2(self.linear2(x)))
+    #     x = self.linear3(x)
+
+    #     return self.sigmoid(x)
+
+    def forward(self, inputs,lengths,batch_sizes, label=True):
         """Discriminate feature vectors generated via teacher forcing and free running."""
 
         ## only get embeddings up to the second last word as the last word is not used for teaching
-        hidden = torch.cat((hidden, embeddings[:,:-1,:]),2)
-        inputs = pack_padded_sequence(hidden, lengths, batch_first=True )
-        hiddens, _ = self.gru(inputs)
+        #inputs = torch.cat((hidden, embeddings[:,:-1,:]),2)
+        #inputs = pack_padded_sequence(hidden, lengths, batch_first=True )
+        #hiddens, _ = self.gru(inputs)
+        if label:
+            inputs = self.embed(inputs)
+        else:
+            inputs = torch.exp(inputs)
+            inputs = self.fc(inputs)
 
+        inputs = PackedSequence(data=inputs, batch_sizes=batch_sizes)
+
+        hiddens, _ = self.gru(inputs)
         hiddens = pad_packed_sequence(hiddens, batch_first=True)[0]
 
         x = torch.cat([ hiddens[ i, lengths[i] - 1 ].unsqueeze(0) for i in range( len(lengths) ) ], 0)

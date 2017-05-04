@@ -55,8 +55,9 @@ def train(save_path, args):
                              vocab, args.num_layers)
 
     if args.pretrained:
-        encoder.load_state_dict(torch.load('models/encoder{}'.format(args.pretrained)))
-        decoder.load_state_dict(torch.load('models/decoder{}'.format(args.pretrained)))
+        print("loading pretrained model")
+        #encoder.load_state_dict(torch.load('models/encoder{}'.format(args.pretrained)))
+        decoder.load_state_dict(torch.load(args.pretrained))
 
     state = (Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)),
      Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)))
@@ -263,7 +264,7 @@ if __name__ == '__main__':
                         help='dimension of lstm hidden states')
     parser.add_argument('--num_layers', type=int , default=1 ,
                         help='number of layers in lstm')
-    parser.add_argument('--pretrained', type=str)#, default='-2-20000.pkl')
+    parser.add_argument('--pretrained', type=str, default='logs/coco/03052017180131/decoder-1-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=16)
