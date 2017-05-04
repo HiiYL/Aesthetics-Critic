@@ -175,49 +175,37 @@ def run(save_path, args):
                 sampled_ids_forced = pad_packed_sequence([sampled_ids_forced, batch_sizes], batch_first=True)[0]
                 sampled_ids_forced = sampled_ids_forced.cpu().data.numpy()
 
-                for i, comment in enumerate(sampled_ids_free):
-                    if i > 1:
-                        break
-                    sampled_caption = []
-                    sample = captions.cpu().data.numpy()
+                sampled_captions = []
+
+                def word_idx_to_sentence(sample):
+                    sampled_caption = 
                     for word_id in sample[i]:
                         word = vocab.idx2word[word_id]
                         sampled_caption.append(word)
                         if word == '<end>':
                             break
-                    sentence = "[G]" + ' '.join(sampled_caption)
-                    print(sentence)
+                    return sampled_caption
 
-                    sampled_caption = []
-                    for word_id in sampled_ids_forced[i]:
-                        word = vocab.idx2word[word_id]
-                        sampled_caption.append(word)
-                        if word == '<end>':
-                            break
-                    sentence = "[T]" + ' '.join(sampled_caption)
-                    print(sentence)
+                sample = captions.cpu().data.numpy()
+                for i, comment in enumerate(sampled_ids_free):
+                    if i > 1:
+                        break
+                    sampled_caption   = word_idx_to_sentence(i)
+                    sampled_captions += "[G]{} \n".format(' '.join(sampled_caption))
 
-                    sampled_caption = []
-                    for word_id in comment:
-                        word = vocab.idx2word[word_id]
-                        sampled_caption.append(word)
-                        if word == '<end>':
-                            break
-                    sentence = "[F]" + ' '.join(sampled_caption)
-                    print(sentence)
+                    sampled_caption =  word_idx_to_sentence(sampled_ids_forced[i])
+                    sampled_captions += "[T]{} \n".format(' '.join(sampled_caption))
 
-                    print("")
+                    sampled_caption =  word_idx_to_sentence(comment)
+                    sampled_captions += "[T]{} \n".format(' '.join(sampled_caption))
+
+                    print(sampled_captions)
+
             # Save the model
             if (total_iterations+1) % args.save_step == 0:
-                # torch.save(encoder.state_dict(), 
-                #            os.path.join(save_path, 
-                #                         'encoder-%d-%d.pkl' %(epoch+1, i+1)))
                 torch.save(netG.state_dict(), 
                            os.path.join(save_path, 
                                         'netG-%d-%d.pkl' %(epoch+1, i+1)))
-                # torch.save(netD.state_dict(), 
-                #            os.path.join(save_path, 
-                #                         'netD-%d-%d.pkl' %(epoch+1, i+1)))
 
 
             if total_iterations % args.tb_log_step == 0:
@@ -278,7 +266,9 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
                 word = vocab.idx2word[word_id]
                 if word == '<end>':
                     break
-                if word != '<start>' and word != '<pad>':
+                elif word == '<start>' and word == '<pad>':
+                    continue
+                else:
                     sampled_caption.append(word)
 
             item_json = {"image_id": img_id[j], "caption":' '.join(sampled_caption) }
@@ -335,11 +325,6 @@ if __name__ == '__main__':
     parser.add_argument('--comments_path', type=str,
                         default='data/labels.h5',
                         help='path for train annotation json file')
-    # parser.add_argument('--image_dir', type=str, default='./data/resized2014' ,
-    #                     help='directory for resized images')
-    # parser.add_argument('--comments_path', type=str,
-    #                     default='./data/annotations/captions_train2014.json',
-    #                     help='path for train annotation json file')
     parser.add_argument('--log_step', type=int , default=10,
                         help='step size for prining log info')
     parser.add_argument('--tb_log_step', type=int , default=100,
