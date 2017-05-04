@@ -36,14 +36,6 @@ from json import encoder
 encoder.FLOAT_REPR = lambda o: format(o, '.3f')
 import os
 
-##
-
-
-
-
-
-
-
 def run(save_path, args):
     # Create model directory
     if not os.path.exists(args.model_path):
@@ -51,7 +43,8 @@ def run(save_path, args):
     
     # Image preprocessing
     transform = transforms.Compose([
-        transforms.Scale((299,299)),
+        transforms.Scale(299),
+        transforms.RandomCrop(299),
         transforms.RandomHorizontalFlip(), 
         transforms.ToTensor(), 
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
@@ -72,9 +65,11 @@ def run(save_path, args):
     netG = G(args.embed_size, args.hidden_size, vocab, args.num_layers)
     netD = D(args.embed_size, args.hidden_size, vocab, args.num_layers)
     if args.pretrained:
+        print("[!]loading pretrained model....")
         netG.load_state_dict(torch.load(args.pretrained))
+        print("Done!")
 
-    label_real, label_fake = torch.FloatTensor(args.batch_size), torch.FloatTensor(args.batch_size)
+    label_real, label_fake = torch.LongTensor(args.batch_size), torch.LongTensor(args.batch_size)
     real_label = 1
     fake_label = 0
 
@@ -124,24 +119,25 @@ def run(save_path, args):
 
             netG.zero_grad()
             netD.zero_grad()
+
             features = encoder(images).detach()
             out, hidden, embeddings   = netG(features, captions, lengths, state, teacher_forced=True)
             outputs_free, hidden_free = netG(features, captions, lengths, state, teacher_forced=False)
 
             ## Discriminator Step
             output_real      = netD(targets,lengths,batch_sizes, label=True)
-            label_real.data.resize_(output_real.size()).fill_(real_label)
-            D_loss_real      = criterion_bce(output_real, label_real)
+            label_real.data.resize_(output_real.size(0)).fill_(real_label)
+
+            D_loss_real      = criterion(output_real, label_real)
             
             output_fake      = netD(outputs_free.detach(),lengths,batch_sizes, label=False)
-            label_fake.data.resize_(output_fake.size()).fill_(fake_label)
-            D_loss_fake      = criterion_bce(output_fake, label_fake)
-            
-            total = len(label_real)
-            correct_real = (output_real.data >= 0.5).sum() / total
-            correct_fake = (output_fake.data < 0.5).sum() / total
+            label_fake.data.resize_(output_fake.size(0)).fill_(fake_label)
+            D_loss_fake      = criterion(output_fake, label_fake)
+
+            correct_real = torch.mean((torch.max(output_real,1)[1].data == label_real.data).float())
+            correct_fake = torch.mean((torch.max(output_fake,1)[1].data == label_fake.data).float())
             D_accuracy = 0.5 * ( correct_real + correct_fake )
-            D_loss = D_loss_real + D_loss_fake
+            D_loss = 0.5 * ( D_loss_real + D_loss_fake )
 
             if not D_accuracy > 0.99:
                 D_loss.backward()
@@ -153,7 +149,7 @@ def run(save_path, args):
             netG.zero_grad()
 
             output_free = netD(outputs_free,lengths,batch_sizes, label=False)
-            gan_loss = criterion_bce(output_free, label_real)
+            gan_loss = criterion(output_free, label_real)
 
             mle_loss = criterion(out, targets)
             if D_accuracy > 0.75:
@@ -228,7 +224,7 @@ def run(save_path, args):
                 log_value('Loss', mle_loss.data[0], total_iterations)
                 log_value('Perplexity', np.exp(mle_loss.data[0]), total_iterations)
 
-            if total_iterations % 10000 == 0:
+            if (total_iterations+1) % 10000 == 0:
                 validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iterations)
 
             total_iterations += 1
@@ -312,8 +308,6 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
     for metric, score in cocoEval.eval.items():
         log_value(metric, score, total_iterations)
         print '%s: %.3f'%(metric, score)
-
-
 
     netG.train()
     encoder.train()

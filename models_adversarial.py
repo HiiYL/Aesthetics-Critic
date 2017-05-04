@@ -299,7 +299,7 @@ class D(nn.Module):
 
         self.linear = nn.Linear(fc_embed_size, fc_embed_size)
         self.linear2 = nn.Linear(fc_embed_size, fc_embed_size)
-        self.linear3 = nn.Linear(fc_embed_size, 1)
+        self.linear3 = nn.Linear(fc_embed_size, 2)
 
 
 
@@ -313,6 +313,7 @@ class D(nn.Module):
 
         self.dropout = nn.Dropout(0.5)
         self.sigmoid = nn.Sigmoid()
+        self.log_softmax = nn.LogSoftmax()
 
         self.bn2 = nn.BatchNorm1d(fc_embed_size, momentum=0.01)
         #self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
@@ -380,7 +381,7 @@ class D(nn.Module):
         x = self.relu(self.bn2(self.linear2(x)))
         x = self.linear3(x)
 
-        return self.sigmoid(x)
+        return self.log_softmax(x)
 
 
 class InceptionNet(nn.Module):
