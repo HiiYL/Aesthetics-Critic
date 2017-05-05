@@ -101,7 +101,7 @@ class G(nn.Module):
         self.embed = nn.Embedding(self.vocab_size, embed_size)
         self.linear = nn.Linear(hidden_size, self.vocab_size)
 
-        self.adaptive_pool = nn.AdaptiveMaxPool2d((8,8))
+        #self.adaptive_pool = nn.AdaptiveMaxPool2d((8,8))
         self.conv = nn.Conv2d(2048, 32, kernel_size=3, stride=1, padding=1)
         self.fc = nn.Linear(2048, embed_size)
         self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
@@ -138,7 +138,7 @@ class G(nn.Module):
         
     def forward(self, features, captions, lengths, states, teacher_forced=True):
         """Decode image feature vectors and generates captions."""
-        features = self.adaptive_pool(features)
+        #features = self.adaptive_pool(features)
         features = self.conv(features)
         features = features.view(features.size(0), -1)
         features = self.bn(self.fc(features))
@@ -157,11 +157,8 @@ class G(nn.Module):
             inputs = embeddings[:,i,:]
             if hx.data.size(0) > inputs.data.size(0):
                 hx = hx[:inputs.size(0)]
-            attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
-            attn_applied = features * attn_weights
-            inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
-            
-            hx = self.gru_cell(inputs, hx)
+                
+            hx = self.gru_attention(inputs, hx, features)
             hiddens_tensor[ :, i, :] = hx
 
         hiddens_tensor_packed, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
@@ -177,41 +174,232 @@ class G(nn.Module):
         for i in range(lengths[0]):
             if hx.data.size(0) > inputs.data.size(0):
                 hx = hx[:inputs.size(0)]
-            attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
-            attn_applied = features * attn_weights
-            inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
 
-            hx = self.gru_cell(inputs, hx)
-            out = self.linear(hx)
-            predicted = out.max(1)[1]
-            inputs = self.embed(predicted).squeeze()
+            hx = self.gru_attention(inputs, hx, features)
+            outputs = self.log_softmax(self.linear(hx))
+            predicted = outputs.max(1)[1]
+            inputs = self.embed(predicted).view(predicted.size(0), -1)
 
             hiddens_tensor[:,i,:] = hx
-            output_tensor [:,i,:] = out
+            output_tensor [:,i,:] = outputs
 
         output_tensor, _ = pack_padded_sequence(output_tensor, lengths, batch_first=True)
         #hiddens_tensor, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
-        return self.log_softmax(output_tensor), hiddens_tensor
-    
+        return output_tensor, hiddens_tensor
+
     def sample(self, features, states):
-        """Samples captions for given image features (Greedy search)."""
+        features = self.conv(features)
+        features = features.view(features.size(0), -1)
         features = self.bn(self.fc(features))
 
+        inputs = features
         sampled_ids = []
-        inputs = features.unsqueeze(1)
-        for i in range(20):                                      # maximum sampling length
-            hiddens, states = self.lstm(inputs, states)          # (batch_size, 1, hidden_size)
-            outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
+        hx = states[0].squeeze()
+        for i in range(50):
+            if hx.data.size(0) > inputs.data.size(0):
+                hx = hx[:inputs.size(0)]
+
+            hx = self.gru_attention(inputs, hx, features)
+            outputs = self.log_softmax(self.linear(hx))
             predicted = outputs.max(1)[1]
+            inputs = self.embed(predicted).view(predicted.size(0), -1)
             sampled_ids.append(predicted)
-            inputs = self.embed(predicted)
-        sampled_ids = torch.cat(sampled_ids, 1)                  # (batch_size, 20)
-        return sampled_ids.squeeze()
 
-    def beamSearch(self, features, states, n=5):
+        sampled_ids = torch.cat(sampled_ids, 1)
+        return sampled_ids
+
+
+    def gru_attention(self, inputs, hx, features):
+        attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
+        attn_applied = features * attn_weights
+        inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
+
+        hx = self.gru_cell(inputs, hx)
+
+        return hx
+
+    def beamSearchBatched(self, features, states, n=3):
+        features = self.conv(features)
+        features = features.view(features.size(0), -1)
+        features = self.bn(self.fc(features))
+
+        inputs = features
+
+        hx = states[0].squeeze()
+
+        hx = self.gru_attention(inputs, hx, features)   # (batch_size, 1, hidden_size)
+        outputs = self.linear(hx)                    # (batch_size, vocab_size)
+        confidences, best_choices = outputs.topk(n)
+
+        cached_states = [hx] * n
+
+        end_idx = self.vocab.word2idx["<end>"]
+        
+        #best_choices = best_choices[:,0]
+        terminated_choices = []
+        terminated_confidences = []
+
+
+        # one loop for each word
+        for word_index in range(50):
+            #print(best_choices)
+            best_list = [None] * n * (n - len(terminated_choices))
+            best_confidence = [None] * n * (n - len(terminated_choices))
+            best_states = [None] * n * (n - len(terminated_choices))
+
+            print(best_choices)
+            # for each choice
+            for choice_index, choice in enumerate(best_choices.transpose(-1,0)):
+                # print(choice)
+                input_choice = choice[word_index] if word_index != 0 else choice
+                # print(input_choice)
+                inputs = self.embed(input_choice)
+                # print(inputs)
+                current_confidence = confidences[:,choice_index]
+
+                hx = self.gru_attention(inputs=inputs,hx=cached_states[choice_index], features=features)        # (batch_size, 1, hidden_size)
+                outputs = self.linear(hx)                                                                       # (batch_size, vocab_size)
+
+                # pick n best nodes for each possible choice
+                inner_confidences, inner_best_choices = outputs.topk(n)
+
+                #inner_confidences = inner_confidences[0]
+                inner_best_choices = inner_best_choices.transpose(-1,0)
+                inner_confidences  = inner_confidences.transpose(-1,0)
+                print("---- LOOP ----")
+                #print(outputs)
+                for inner_choice_idx, inner_choice in enumerate(inner_best_choices):
+                    print(inner_choice)
+
+                    if word_index != 0:
+                        choice = best_choices[choice_index]
+
+                    item = torch.cat((choice, inner_choice))
+                    #print(item)
+
+
+                    position = choice_index * n + inner_choice_idx
+
+                    #print()
+                    #print()
+                    #print(inner_confidences[inner_choice_idx])
+                    #print(current_confidence)
+                    #print(best_confidence[position])
+
+                    best_list[position]   = item
+                    best_states[position] = hx
+                    best_confidence[position] = inner_confidences[inner_choice_idx] + current_confidence
+
+
+            best_confidence_tensor = torch.cat(best_confidence, 0)
+            _ , topk = best_confidence_tensor.topk(n - len(terminated_choices))
+
+            topk_index = topk.data.int().cpu().numpy()
+
+            ## Filter nodes that contains termination token '<end>'
+            best_choices_index = [ index for index in topk_index if end_idx not in best_list[index].data.int() ]
+
+            terminated_index   = list(set(topk_index) - set(best_choices_index))
+            terminated_choices.extend([ best_list[index] for index in terminated_index ])
+            terminated_confidences.extend([ best_confidence_tensor[index].data.cpu().numpy()[0] for index in terminated_index ])
+
+
+            ## If there is still nodes to evaluate
+            if len(best_choices_index) > 0:
+                best_choices  = [ best_list[index] for index in best_choices_index ]
+                #cached_states = [ best_states[index] for index in best_choices_index ]
+                confidences   = [ best_confidence_tensor[index] for index in best_choices_index ]
+                confidences   = torch.cat(confidences,0).unsqueeze(0)
+            else:
+                break
+
+
+    def beamSearch(self, features, states, n=1, diverse_gamma=0.0):
+        features = self.conv(features)
+        features = features.view(features.size(0), -1)
+        features = self.bn(self.fc(features))
+
+        inputs = features
+
+        states = states[0].squeeze(0)
+        states = self.gru_attention(inputs, states, features)   # (batch_size, 1, hidden_size)
+        outputs = self.log_softmax(self.linear(states.squeeze(1)))           # (batch_size, vocab_size)
+        confidences, best_choices = outputs.topk(n)
+
+        cached_states = [states] * n
+
+        end_idx = self.vocab.word2idx["<end>"]
+        
+        best_choices = best_choices[0]
+        terminated_choices = []
+        terminated_confidences = []
+
+        # one loop for each word
+        for word_index in range(50):
+            #print(best_choices)
+            best_list = [None] * n * (n - len(terminated_choices))
+            best_confidence = [None] * n * (n - len(terminated_choices))
+            best_states = [None] * n * (n - len(terminated_choices))
+
+            # for each choice
+            for choice_index, choice in enumerate(best_choices):
+
+                input_choice = choice[word_index] if word_index != 0 else choice
+                   
+                inputs = self.embed(input_choice)
+                current_confidence = confidences[:,choice_index]
+
+                out_states = self.gru_attention(inputs, cached_states[choice_index], features) # (batch_size, 1, hidden_size)
+                outputs = self.log_softmax(self.linear(out_states.squeeze(1)))                 # (batch_size, vocab_size)
+
+                # pick n best nodes for each possible choice
+                inner_confidences, inner_best_choices = outputs.topk(n)
+                inner_confidences, inner_best_choices = inner_confidences.squeeze(), inner_best_choices.squeeze()
+                for rank, inner_choice in enumerate(inner_best_choices):
+                    if word_index != 0:
+                        choice = best_choices[choice_index]
+                    item = torch.cat((choice, inner_choice))
+
+                    position = choice_index * n + rank
+
+                    best_list[position]   = item
+                    best_states[position] = out_states
+                    best_confidence[position] = current_confidence + inner_confidences[rank] - (diverse_gamma * (rank + 1))
+
+
+            best_confidence_tensor = torch.cat(best_confidence, 0)
+            _ , topk = best_confidence_tensor.topk(n - len(terminated_choices))
+
+            topk_index = topk.data.int().cpu().numpy()
+
+            ## Filter nodes that contains termination token '<end>'
+            best_choices_index = [ index for index in topk_index if end_idx not in best_list[index].data.int() ]
+
+            terminated_index   = list(set(topk_index) - set(best_choices_index))
+            terminated_choices.extend([ best_list[index] for index in terminated_index ])
+            terminated_confidences.extend([ best_confidence_tensor[index].data.cpu().numpy()[0] for index in terminated_index ])
+
+
+            ## If there is still nodes to evaluate
+            if len(best_choices_index) > 0:
+                best_choices  = [ best_list[index] for index in best_choices_index ]
+                cached_states = [ best_states[index] for index in best_choices_index ]
+                confidences   = [ best_confidence_tensor[index] for index in best_choices_index ]
+                confidences   = torch.cat(confidences,0).unsqueeze(0)
+            else:
+                break
+
+        #print(best_choices)
+        if len(best_choices_index) > 0:
+            terminated_choices.extend([ best_list[index] for index in best_choices_index ])
+            terminated_confidences.extend([ best_confidence_tensor[index].data.cpu().numpy()[0] for index in best_choices_index ])
+        return terminated_choices,terminated_confidences
+
+
+    def beamSearchOld(self, features, states, n=5):
         inputs = features.unsqueeze(1)
 
-        hiddens, states = self.lstm(inputs, states)          # (batch_size, 1, hidden_size)
+        hiddens, states = self.gru(inputs, states)          # (batch_size, 1, hidden_size)
         outputs = self.linear(hiddens.squeeze(1))            # (batch_size, vocab_size)
         confidences, best_choices = outputs.topk(n)
 
@@ -226,7 +414,6 @@ class G(nn.Module):
         # one loop for each word
         for word_index in range(50):
             #print(best_choices)
-
             best_list = [None] * n * (n - len(terminated_choices))
             best_confidence = [None] * n * (n - len(terminated_choices))
             best_states = [None] * n * (n - len(terminated_choices))

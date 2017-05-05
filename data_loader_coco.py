@@ -70,8 +70,6 @@ class CocoValDataset(data.Dataset):
         self.transform = transform
         self.ids = list(self.coco.imgs.keys())
 
-        print(len(self.ids))
-
     def __getitem__(self, index):
         """Returns one data pair (image and caption)."""
         coco = self.coco

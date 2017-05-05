@@ -57,7 +57,7 @@ def run(save_path, args):
                              transform, args.batch_size,
                              shuffle=True, num_workers=args.num_workers)
     val_data_loader = get_loader("val", vocab, 
-                             transform, args.batch_size,
+                             transform, 1,
                              shuffle=False, num_workers=args.num_workers)
 
     # Build the models
@@ -78,12 +78,15 @@ def run(save_path, args):
     
     state = (Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)),
      Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)))
+    val_state = (Variable(torch.zeros(args.num_layers, 1, args.hidden_size)),
+     Variable(torch.zeros(args.num_layers, 1, args.hidden_size)))
 
     if torch.cuda.is_available():
         encoder = encoder.cuda()
         netG.cuda()
         netD.cuda()
         state = [s.cuda() for s in state]
+        val_state = [s.cuda() for s in val_state]
         label_real, label_fake = label_real.cuda(), label_fake.cuda()
         criterion_bce = criterion_bce.cuda()
         criterion = criterion.cuda()
@@ -175,32 +178,31 @@ def run(save_path, args):
                 sampled_ids_forced = pad_packed_sequence([sampled_ids_forced, batch_sizes], batch_first=True)[0]
                 sampled_ids_forced = sampled_ids_forced.cpu().data.numpy()
 
-                sampled_captions = []
-
                 def word_idx_to_sentence(sample):
-                    sampled_caption = 
-                    for word_id in sample[i]:
+                    sampled_caption = []
+                    for word_id in sample:
                         word = vocab.idx2word[word_id]
                         sampled_caption.append(word)
                         if word == '<end>':
                             break
-                    return sampled_caption
+                    return ' '.join(sampled_caption)
 
-                sample = captions.cpu().data.numpy()
+                groundtruth_caption = captions.cpu().data.numpy()
                 for i, comment in enumerate(sampled_ids_free):
                     if i > 1:
                         break
-                    sampled_caption   = word_idx_to_sentence(i)
-                    sampled_captions += "[G]{} \n".format(' '.join(sampled_caption))
+                    sampled_captions = ""
+
+                    sampled_caption   = word_idx_to_sentence(groundtruth_caption[i])
+                    sampled_captions += "[G]{} \n".format(sampled_caption)
 
                     sampled_caption =  word_idx_to_sentence(sampled_ids_forced[i])
-                    sampled_captions += "[T]{} \n".format(' '.join(sampled_caption))
+                    sampled_captions += "[T]{} \n".format(sampled_caption)
 
                     sampled_caption =  word_idx_to_sentence(comment)
-                    sampled_captions += "[T]{} \n".format(' '.join(sampled_caption))
+                    sampled_captions += "[T]{} \n".format(sampled_caption)
 
                     print(sampled_captions)
-
             # Save the model
             if (total_iterations+1) % args.save_step == 0:
                 torch.save(netG.state_dict(), 
@@ -212,8 +214,8 @@ def run(save_path, args):
                 log_value('Loss', mle_loss.data[0], total_iterations)
                 log_value('Perplexity', np.exp(mle_loss.data[0]), total_iterations)
 
-            if (total_iterations+1) % 10000 == 0:
-                validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iterations)
+            if (total_iterations+1) % 100 == 0:
+                validate(encoder, netG, val_data_loader, val_state, criterion, vocab, total_iterations)
 
             total_iterations += 1
 
@@ -242,6 +244,8 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
     for parameter in netG.parameters():
         parameter.requires_grad=False
 
+
+
     val_json = []
     total_val_step = len(val_data_loader)
     for i, (images, captions, lengths, img_id) in enumerate(val_data_loader):
@@ -254,31 +258,53 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
 
         # Forward, Backward and Optimize
         features = encoder(images)
-        outputs, _ = netG(features, captions, lengths, state, teacher_forced=False)
-        sampled_ids = torch.max(outputs,1)[1].squeeze()
-        sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
-        sampled_ids = sampled_ids.cpu().data.numpy()
-        loss        = criterion(outputs, targets)
 
-        for j, comment in enumerate(sampled_ids):
-            sampled_caption = []
-            for word_id in comment:
-                word = vocab.idx2word[word_id]
-                if word == '<end>':
-                    break
-                elif word == '<start>' and word == '<pad>':
-                    continue
-                else:
-                    sampled_caption.append(word)
+        sampled_ids_list, terminated_confidences = netG.beamSearch(features, state, n=10, diverse_gamma=0.5)
+        sampled_ids_list = np.array([ sampled_ids.cpu().data.numpy() for sampled_ids in sampled_ids_list ])
+        
+        # Decode word_ids to words
+        sorted_idx = np.argsort(terminated_confidences)
+        sampled_ids_sorted = sorted(zip(terminated_confidences,sampled_ids_list), reverse=True)
 
-            item_json = {"image_id": img_id[j], "caption":' '.join(sampled_caption) }
-            val_json.append(item_json)
+        _, sampled_ids = sampled_ids_sorted[0]
 
-        # Print log info
-        if i % args.log_step == 0:
-           print('[%d/%d] - Running model on validation set.... | Loss: %.4f | Perplexity: %5.4f'
-                 %(i, total_val_step, 
-                   loss.data[0], np.exp(loss.data[0])))
+        sampled_caption = []
+        for word_id in sampled_ids:
+            word = vocab.idx2word[word_id]
+            if word == '<end>':
+                break
+            if word != '<start>' and word != '<pad>':
+                sampled_caption.append(word)
+
+        sentence = ' '.join(sampled_caption)
+        print(sentence)
+        item_json = {"image_id": img_id[0], "caption": sentence}
+        val_json.append(item_json)
+        # outputs, _ = netG(features, captions, lengths, state, teacher_forced=False)
+        # sampled_ids = torch.max(outputs,1)[1].squeeze()
+        # sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
+        # sampled_ids = sampled_ids.cpu().data.numpy()
+        # loss        = criterion(outputs, targets)
+
+        # for j, comment in enumerate(sampled_ids):
+        #     sampled_caption = []
+        #     for word_id in comment:
+        #         word = vocab.idx2word[word_id]
+        #         if word == '<end>':
+        #             break
+        #         elif word == '<start>' and word == '<pad>':
+        #             continue
+        #         else:
+        #             sampled_caption.append(word)
+
+        #     item_json = {"image_id": img_id[j], "caption":' '.join(sampled_caption) }
+        #     val_json.append(item_json)
+
+        # # Print log info
+        # if i % args.log_step == 0:
+        #    print('[%d/%d] - Running model on validation set.... | Loss: %.4f | Perplexity: %5.4f'
+        #          %(i, total_val_step, 
+        #            loss.data[0], np.exp(loss.data[0])))
 
 
     path, file = os.path.split(resFile)

@@ -23,7 +23,32 @@ import json
 
 from tensorboard_logger import configure, log_value
 
+
+## Ms COCO eval code imports
+from pycocotools.coco import COCO
+from pycocoevalcap.eval import COCOEvalCap
+import matplotlib.pyplot as plt
+import skimage.io as io
+
+import json
+from json import encoder
+encoder.FLOAT_REPR = lambda o: format(o, '.3f')
+import os
+
+torch.manual_seed(123)
+
 def train(save_path, args):
+    ## set up file names and pathes
+    dataDir='data/coco'
+    logDir=save_path
+    dataType='val2014'
+    algName = 'fakecap'
+    annFile='%s/captions_%s.json'%(dataDir,dataType)
+    subtypes=['results', 'evalImgs', 'eval']
+    [resFile, evalImgsFile, evalFile]= \
+    ['%s/captions_%s_%s_%s.json'%(logDir,dataType,algName,subtype) for subtype in subtypes]
+    ###
+
     # Create model directory
     if not os.path.exists(args.model_path):
         os.makedirs(args.model_path)
@@ -31,6 +56,7 @@ def train(save_path, args):
     # Image preprocessing
     transform = transforms.Compose([
         transforms.Scale(299),
+        transforms.RandomCrop(299),
         transforms.ToTensor(), 
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     
@@ -73,6 +99,7 @@ def train(save_path, args):
 
     val_json = []
     total_val_step = len(val_data_loader)
+    total_iterations = 0
     for i, (images, captions, lengths, img_id) in enumerate(val_data_loader):
         if i > 100:
             break
@@ -85,32 +112,87 @@ def train(save_path, args):
 
         # Forward, Backward and Optimize
         features = encoder(images)
-        outputs, _ = netG(features, captions, lengths, state, teacher_forced=False)
-        sampled_ids = torch.max(outputs,1)[1].squeeze()
-        sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
-        sampled_ids = sampled_ids.cpu().data.numpy()
-        loss        = criterion(outputs, targets)
 
-        for j, comment in enumerate(sampled_ids):
-            sampled_caption = []
-            for word_id in comment:
-                word = vocab.idx2word[word_id]
-                if word == '<end>':
-                    break
-                if word != '<start>' and word != '<pad>':
-                    sampled_caption.append(word)
+        sampled_ids_list, terminated_confidences = netG.beamSearch(features, state, n=10, diverse_gamma=0.5)
+        sampled_ids_list = np.array([ sampled_ids.cpu().data.numpy() for sampled_ids in sampled_ids_list ])
+        
+        # Decode word_ids to words
+        sorted_idx = np.argsort(terminated_confidences)
+        sampled_ids_sorted = sorted(zip(terminated_confidences,sampled_ids_list), reverse=True)
 
-            item_json = {"image_id": img_id[j], "caption":' '.join(sampled_caption) }
-            val_json.append(item_json)
+        _, sampled_ids = sampled_ids_sorted[0]
+
+        sampled_caption = []
+        for word_id in sampled_ids:
+            word = vocab.idx2word[word_id]
+            if word == '<end>':
+                break
+            if word != '<start>' and word != '<pad>':
+                sampled_caption.append(word)
+
+        sentence = ' '.join(sampled_caption)
+        print(sentence)
+        item_json = {"image_id": img_id[0], "caption": sentence}
+        val_json.append(item_json)
+        
+        # print()
+        # for sampled_with_confidence in sampled_ids_sorted:
+        #     confidence, sample  = sampled_with_confidence
+        #     sampled_caption = []
+        #     for word_id in sample:
+        #         word = vocab.idx2word[word_id]
+        #         sampled_caption.append(word)
+        #         if word == '<end>':
+        #             break
+        #     sentence = ' '.join(sampled_caption)
+            
+        #     # Print out image and generated caption.
+        #     print ("{} - {:.4f} ".format(sentence, confidence))
+        # print()
+
+
+        # # print(sampled_ids)
+        # # sampled_ids = torch.max(outputs,1)[1].squeeze()
+        # # sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
+        # sampled_ids = sampled_ids.cpu().data.numpy()
+        # loss        = criterion(outputs, targets)
+
+        # for j, comment in enumerate(sampled_ids):
+        #     sampled_caption = []
+        #     for word_id in comment:
+        #         word = vocab.idx2word[word_id]
+        #         if word == '<end>':
+        #             break
+        #         if word != '<start>' and word != '<pad>':
+        #             sampled_caption.append(word)
+
+        #     sentence = ' '.join(sampled_caption)
+        #     print(sentence)
+        #     item_json = {"image_id": img_id[j], "caption": sentence}
+        #     val_json.append(item_json)
 
         # Print log info
         if i % args.log_step == 0:
-           print('[%d/%d] - Running model on validation set.... | Loss: %.4f | Perplexity: %5.4f'
-                 %(i, total_val_step, 
-                   loss.data[0], np.exp(loss.data[0])))
+           print('[%d/%d] - Running model on validation set....'
+                 %(i, total_val_step))
 
-    with open('{}/captions_val2014_fakecap_results.json'.format(save_path), 'w') as outfile:
+    path, file = os.path.split(resFile)
+
+    export_filename = '{}/{}_{}'.format(path, total_iterations, file)
+    print("Exporting to... {}".format(export_filename))
+    with open(export_filename, 'w') as outfile:
         json.dump(val_json, outfile)
+
+    print("calculating metrics...")
+    coco = COCO(annFile)
+    cocoRes = coco.loadRes(export_filename)
+    cocoEval = COCOEvalCap(coco, cocoRes)
+    cocoEval.params['image_id'] = cocoRes.getImgIds()
+    cocoEval.evaluate()
+
+    # for metric, score in cocoEval.eval.items():
+    #     log_value(metric, score, total_iterations)
+    #     print '%s: %.3f'%(metric, score)
 
 
 
@@ -124,7 +206,7 @@ if __name__ == '__main__':
                         help='path for saving trained models')
     parser.add_argument('--crop_size', type=int, default=299 ,
                         help='size for randomly cropping images')
-    parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
+    parser.add_argument('--vocab_path', type=str, default='data/vocab-py2.pkl',
                         help='path for vocabulary wrapper')
     parser.add_argument('--dataset', type=str, default='coco' ,
                         help='dataset to use')
@@ -150,7 +232,7 @@ if __name__ == '__main__':
                         help='dimension of gru hidden states')
     parser.add_argument('--num_layers', type=int , default=1 ,
                         help='number of layers in gru')
-    parser.add_argument('--pretrained', type=str, default='logs/coco/04052017134536/netG-1-20000.pkl')#, default='-2-20000.pkl')
+    parser.add_argument('--pretrained', type=str, default='logs/coco/03052017180131/decoder-1-20000.pkl')#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=16)
@@ -172,5 +254,5 @@ if __name__ == '__main__':
     if not os.path.exists(save_path):
         os.mkdir(save_path)
 
-    configure(save_path)
+    # configure(save_path)
     train(save_path, args)
