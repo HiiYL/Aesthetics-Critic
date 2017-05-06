@@ -27,7 +27,7 @@ class Vocabulary(object):
     def __len__(self):
         return len(self.word2idx)
 
-def build_vocab(dataframe_path, threshold=15):
+def build_vocab(dataframe_path, threshold=5):
     """Build a simple vocabulary wrapper."""
     store = HDFStore(dataframe_path)
     ava_table = pd.concat([store['labels_train'], store['labels_test']])

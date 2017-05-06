@@ -95,6 +95,8 @@ class G(nn.Module):
         """Set the hyper-parameters and build the layers."""
         super(G, self).__init__()
 
+        self.encoder = EncoderCNN(embed_size,models.inception_v3(pretrained=True))
+
         self.vocab = vocab
         self.vocab_size = len(vocab)
 

@@ -21,8 +21,8 @@ class CocoDataset(data.Dataset):
             vocab: vocabulary wrapper.
             transform: image transformer.
         """
-        self.root = "data/coco/{}2014/".format(mode)
-        self.coco = COCO("data/coco/captions_{}2014.json".format(mode))
+        self.root = "data/coco/merged2014"
+        self.coco = COCO("data/coco/captions_{}2014_karpathy_split.json".format(mode))
         self.ids = list(self.coco.anns.keys())
         self.vocab = vocab
         self.transform = transform
@@ -50,7 +50,7 @@ class CocoDataset(data.Dataset):
         return image, target, img_id
 
     def __len__(self):
-        return len(self.ids) - 1
+        return len(self.ids) - 6 # hack until i can figure out how to fix <unk><unk><unk error 
 
 class CocoValDataset(data.Dataset):
     """COCO Custom Dataset compatible with torch.utils.data.DataLoader."""
@@ -63,8 +63,8 @@ class CocoValDataset(data.Dataset):
             vocab: vocabulary wrapper.
             transform: image transformer.
         """
-        self.root = "data/coco/{}2014/".format(mode)
-        self.coco = COCO("data/coco/captions_{}2014.json".format(mode))
+        self.root = "data/coco/merged2014"
+        self.coco = COCO("data/coco/captions_{}2014_karpathy_split.json".format(mode))
         #self.ids = list(self.coco.anns.keys())
         self.vocab = vocab
         self.transform = transform

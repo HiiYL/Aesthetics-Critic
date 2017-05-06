@@ -159,35 +159,35 @@ def run(save_path, args):
                 print('Epoch [%d/%d], Step [%d/%d] Loss: %5.4f, Perplexity: %5.4f'
                       %(epoch, args.num_epochs, i, total_step,  mle_loss.data[0], np.exp(mle_loss.data[0]))) 
 
-            if total_iterations % 100 == 0:
-                print("")
-                sampled_ids_forced = torch.max(out,1)[1].squeeze()
-                sampled_ids_forced = pad_packed_sequence([sampled_ids_forced, batch_sizes], batch_first=True)[0]
-                sampled_ids_forced = sampled_ids_forced.cpu().data.numpy()
+            # if total_iterations % 100 == 0:
+            #     print("")
+            #     sampled_ids_forced = torch.max(out,1)[1].squeeze()
+            #     sampled_ids_forced = pad_packed_sequence([sampled_ids_forced, batch_sizes], batch_first=True)[0]
+            #     sampled_ids_forced = sampled_ids_forced.cpu().data.numpy()
 
-                def word_idx_to_sentence(sample):
-                    sampled_caption = []
-                    for word_id in sample:
-                        word = vocab.idx2word[word_id]
-                        sampled_caption.append(word)
-                        if word == '<end>':
-                            break
-                    return ' '.join(sampled_caption)
+            #     def word_idx_to_sentence(sample):
+            #         sampled_caption = []
+            #         for word_id in sample:
+            #             word = vocab.idx2word[word_id]
+            #             sampled_caption.append(word)
+            #             if word == '<end>':
+            #                 break
+            #         return ' '.join(sampled_caption)
 
-                groundtruth_caption = captions.cpu().data.numpy()
-                for i in range(len(sampled_ids_forced)):
-                    if i > 1:
-                        break
+            #     groundtruth_caption = captions.cpu().data.numpy()
+            #     for i in range(len(sampled_ids_forced)):
+            #         if i > 1:
+            #             break
 
-                    sampled_captions = ""
+            #         sampled_captions = ""
 
-                    sampled_caption   = word_idx_to_sentence(groundtruth_caption[i])
-                    sampled_captions += "[G]{} \n".format(sampled_caption)
+            #         sampled_caption   = word_idx_to_sentence(groundtruth_caption[i])
+            #         sampled_captions += "[G]{} \n".format(sampled_caption)
 
-                    sampled_caption =  word_idx_to_sentence(sampled_ids_forced[i])
-                    sampled_captions += "[T]{} \n".format(sampled_caption)
+            #         sampled_caption =  word_idx_to_sentence(sampled_ids_forced[i])
+            #         sampled_captions += "[T]{} \n".format(sampled_caption)
 
-                    print(sampled_captions)
+            #         print(sampled_captions)
             # Save the model
             if (total_iterations+1) % args.save_step == 0:
                 torch.save(netG.state_dict(), 
@@ -199,7 +199,7 @@ def run(save_path, args):
                 log_value('Loss', mle_loss.data[0], total_iterations)
                 log_value('Perplexity', np.exp(mle_loss.data[0]), total_iterations)
 
-            if (total_iterations+1) % 1000 == 0:
+            if (total_iterations+1) % 10000 == 0:
                 validate(encoder, netG, val_data_loader, val_state, criterion, vocab, total_iterations)
 
             total_iterations += 1
@@ -213,7 +213,7 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
     logDir=save_path
     dataType='val2014'
     algName = 'fakecap'
-    annFile='%s/captions_%s.json'%(dataDir,dataType)
+    annFile='%s/captions_%s_karpathy_split.json'%(dataDir,dataType)
     subtypes=['results', 'evalImgs', 'eval']
     [resFile, evalImgsFile, evalFile]= \
     ['%s/captions_%s_%s_%s.json'%(logDir,dataType,algName,subtype) for subtype in subtypes]
@@ -234,8 +234,6 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
     val_json = []
     total_val_step = len(val_data_loader)
     for i, (images, captions, lengths, img_id) in enumerate(val_data_loader):
-        if i > 100:
-            break
         images = Variable(images, volatile=True)
         captions = Variable(captions, volatile=True)
         if torch.cuda.is_available():
@@ -264,7 +262,6 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
                 sampled_caption.append(word)
 
         sentence = ' '.join(sampled_caption)
-        print(sentence)
         item_json = {"image_id": img_id[0], "caption": sentence}
         val_json.append(item_json)
         # outputs, _ = netG(features, captions, lengths, state, teacher_forced=False)
@@ -317,12 +314,6 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
         parameter.requires_grad=True
     for parameter in netG.parameters():
         parameter.requires_grad=True
-
-
-
-            
-
-
                 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
