@@ -63,7 +63,7 @@ def run(save_path, args):
     # Build the models
     encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True))
     netG = G(args.embed_size, args.hidden_size, vocab, args.num_layers)
-    netD = D(args.embed_size, args.hidden_size, vocab, args.num_layers)
+    netD = D_Attention(args.embed_size, args.hidden_size, vocab, args.num_layers)
     if args.pretrained:
         print("[!]loading pretrained model....")
         netG.load_state_dict(torch.load(args.pretrained))

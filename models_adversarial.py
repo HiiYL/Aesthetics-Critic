@@ -216,8 +216,6 @@ class G(nn.Module):
         return sampled_ids
 
 
-
-
     def beamSearchBatched(self, features, states, n=3):
         features = self.conv(features)
         features = features.view(features.size(0), -1)
@@ -279,12 +277,6 @@ class G(nn.Module):
 
 
                     position = choice_index * n + inner_choice_idx
-
-                    #print()
-                    #print()
-                    #print(inner_confidences[inner_choice_idx])
-                    #print(current_confidence)
-                    #print(best_confidence[position])
 
                     best_list[position]   = item
                     best_states[position] = hx
@@ -488,6 +480,94 @@ class G(nn.Module):
             terminated_confidences.extend([ best_confidence_tensor[index].data.cpu().numpy()[0] for index in best_choices_index ])
         return terminated_choices,terminated_confidences
 
+class D_Attention(nn.Module):
+    def __init__(self, embed_size, hidden_size, vocab, num_layers):
+        """Set the hyper-parameters and build the layers."""
+        super(D_Attention, self).__init__()
+
+        self.vocab = vocab
+        self.vocab_size = len(vocab)
+
+        self.embed = nn.Embedding(self.vocab_size, embed_size)
+        self.linear = nn.Linear(hidden_size, self.vocab_size)
+
+        #self.adaptive_pool = nn.AdaptiveMaxPool2d((8,8))
+        self.conv = nn.Conv2d(2048, 32, kernel_size=3, stride=1, padding=1)
+        self.fc = nn.Linear(2048, embed_size)
+        self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
+
+        self.hidden_size = hidden_size
+
+        self.gru_cell = nn.GRUCell(embed_size, hidden_size)
+        
+        self.linear_fc = nn.Linear(hidden_size * 2, hidden_size)
+
+        self.attn = nn.Linear( hidden_size * 2, hidden_size)
+        self.attn_combine = nn.Linear( hidden_size * 2, hidden_size)
+
+        self.log_softmax = nn.LogSoftmax()
+        self.relu = nn.ReLU()
+
+        self.init_weights()
+    
+    def init_weights(self):
+        """Initialize weights."""
+        self.embed.weight.data.uniform_(-0.1, 0.1)
+
+        self.linear.weight.data.uniform_(-0.1, 0.1)
+        self.linear.bias.data.fill_(0)
+
+        self.fc.weight.data.normal_(0.0, 0.02)
+        self.fc.bias.data.fill_(0)
+
+        self.attn.weight.data.normal_(0.0, 0.02)
+        self.attn.bias.data.fill_(0)
+
+        self.attn_combine.weight.data.normal_(0.0, 0.02)
+        self.attn_combine.bias.data.fill_(0)
+
+
+    def gru_attention(self, inputs, hx, features):
+        attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
+        attn_applied = features * attn_weights
+        inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
+
+        hx = self.gru_cell(inputs, hx)
+
+        return hx
+
+    def forward(self, features, captions, lengths, states):
+        """Decode image feature vectors and generates captions."""
+        #features = self.adaptive_pool(features)
+        features = self.conv(features)
+        features = features.view(features.size(0), -1)
+        features = self.bn(self.fc(features))
+        return self._forward_forced_cell(features, captions, lengths, states)
+
+    def _forward_forced_cell(self, features, captions, lengths, states):
+        if isinstance(captions, torch.cuda.LongTensor):
+            embeddings = self.embed(captions)
+        else:
+            captions = torch.exp(captions)
+            embeddings = self.fc(captions)
+
+        # embeddings = self.embed(captions)
+        embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
+        hx = states[0].squeeze()
+        for i in range(lengths[0]):
+            inputs = embeddings[:,i,:]
+            if hx.data.size(0) > inputs.data.size(0):
+                hx = hx[:inputs.size(0)]
+                
+            hx = self.gru_attention(inputs, hx, features)
+
+        print(hx)
+        exit()
+        # hiddens_tensor_packed, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
+        # outputs = self.linear(hiddens_tensor_packed)
+        return self.log_softmax(outputs), hiddens_tensor, embeddings
+
+
 class D(nn.Module):
     def __init__(self, embed_size, hidden_size, vocab, num_layers):
         """Set the hyper-parameters and build the layers."""
@@ -504,37 +584,27 @@ class D(nn.Module):
 
         self.fc = nn.Linear(len(vocab), gru_embed_size)
         self.embed = nn.Embedding(len(vocab), gru_embed_size)
-
         self.fc.weights = self.embed.weight
 
         self.dropout = nn.Dropout(0.5)
-
         self.relu = nn.ReLU()
-
         self.init_weights()
     
     def init_weights(self):
         """Initialize weights."""
-        #self.embed.weight.data.uniform_(-0.1, 0.1)
+        self.embed.weight.data.uniform_(-0.1, 0.1)
+
         self.linear.weight.data.uniform_(-0.1, 0.1)
         self.linear.bias.data.fill_(0)
-
         self.linear2.weight.data.uniform_(-0.1, 0.1)
         self.linear2.bias.data.fill_(0)
-
         self.linear3.weight.data.uniform_(-0.1, 0.1)
         self.linear3.bias.data.fill_(0)
-
         self.fc.weight.data.uniform_(-0.1, 0.1)
         self.fc.bias.data.fill_(0)
 
     def forward(self, inputs,lengths,batch_sizes, label=True):
         """Discriminate feature vectors generated via teacher forcing and free running."""
-
-        ## only get embeddings up to the second last word as the last word is not used for teaching
-        #inputs = torch.cat((hidden, embeddings[:,:-1,:]),2)
-        #inputs = pack_padded_sequence(hidden, lengths, batch_first=True )
-        #hiddens, _ = self.gru(inputs)
         if label:
             inputs = self.embed(inputs)
         else:
@@ -552,7 +622,7 @@ class D(nn.Module):
         x = self.relu(self.linear2(x))
         x = self.linear3(x)
 
-        return x.mean(0).view(1) #self.log_softmax(x)
+        return x.mean(0).view(1)
 
 
 class InceptionNet(nn.Module):
@@ -570,4 +640,4 @@ class InceptionNet(nn.Module):
         x = self.inception(x)
         x = self.log_softmax(x)
 
-        return x
+        return 
