@@ -147,17 +147,13 @@ class G(nn.Module):
         return hx
 
          
-    def forward(self, features, captions, lengths, states, teacher_forced=True):
+    def forward(self, features, lengths, states):
         """Decode image feature vectors and generates captions."""
         #features = self.adaptive_pool(features)
         features = self.conv(features)
         features = features.view(features.size(0), -1)
         features = self.bn(self.fc(features))
-        # return self.forward_forced(features, captions,lengths)
-        if teacher_forced:
-            return self._forward_forced_cell(features, captions,lengths, states)
-        else:
-            return self._forward_free_cell(features,lengths, states)
+        return self._forward_free_cell(features,lengths, states)
 
     def _forward_forced_cell(self, features, captions, lengths, states):
         embeddings = self.embed(captions)
@@ -502,27 +498,16 @@ class D(nn.Module):
 
         self.gru = nn.GRU(gru_embed_size, gru_embed_size, num_layers,dropout=0.5, batch_first=True, bidirectional=True)
 
-
         self.linear = nn.Linear(fc_embed_size, fc_embed_size)
         self.linear2 = nn.Linear(fc_embed_size, fc_embed_size)
-        self.linear3 = nn.Linear(fc_embed_size, 2)
-
-
+        self.linear3 = nn.Linear(fc_embed_size, 1)
 
         self.fc = nn.Linear(len(vocab), gru_embed_size)
         self.embed = nn.Embedding(len(vocab), gru_embed_size)
 
         self.fc.weights = self.embed.weight
 
-
-        #self.fc = nn.Linear(2048, embed_size)
-
         self.dropout = nn.Dropout(0.5)
-        # self.sigmoid = nn.Sigmoid()
-        # self.log_softmax = nn.LogSoftmax()
-
-        #self.bn2 = nn.BatchNorm1d(fc_embed_size, momentum=0.01)
-        #self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
 
         self.relu = nn.ReLU()
 
@@ -542,26 +527,6 @@ class D(nn.Module):
 
         self.fc.weight.data.uniform_(-0.1, 0.1)
         self.fc.bias.data.fill_(0)
-        #self.fc.weight.data.normal_(0.0, 0.02)
-        #self.fc.bias.data.fill_(0)
-
-    # def forward(self, hidden, embeddings,lengths):
-    #     """Discriminate feature vectors generated via teacher forcing and free running."""
-
-    #     ## only get embeddings up to the second last word as the last word is not used for teaching
-    #     hidden = torch.cat((hidden, embeddings[:,:-1,:]),2)
-    #     inputs = pack_padded_sequence(hidden, lengths, batch_first=True )
-    #     hiddens, _ = self.gru(inputs)
-
-    #     hiddens = pad_packed_sequence(hiddens, batch_first=True)[0]
-
-    #     x = torch.cat([ hiddens[ i, lengths[i] - 1 ].unsqueeze(0) for i in range( len(lengths) ) ], 0)
-
-    #     x = self.relu(self.bn2(self.linear(x)))
-    #     x = self.relu(self.bn2(self.linear2(x)))
-    #     x = self.linear3(x)
-
-    #     return self.sigmoid(x)
 
     def forward(self, inputs,lengths,batch_sizes, label=True):
         """Discriminate feature vectors generated via teacher forcing and free running."""
@@ -587,7 +552,7 @@ class D(nn.Module):
         x = self.relu(self.linear2(x))
         x = self.linear3(x)
 
-        return self.log_softmax(x)
+        return x.mean(0).view(1) #self.log_softmax(x)
 
 
 class InceptionNet(nn.Module):

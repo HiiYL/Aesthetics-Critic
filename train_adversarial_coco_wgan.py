@@ -69,12 +69,16 @@ def run(save_path, args):
         netG.load_state_dict(torch.load(args.pretrained))
         print("Done!")
 
-    label_real, label_fake = torch.LongTensor(args.batch_size), torch.LongTensor(args.batch_size)
+    label_real, label_fake = torch.FloatTensor(args.batch_size), torch.FloatTensor(args.batch_size)
     real_label = 1
     fake_label = 0
 
+    one = torch.cuda.FloatTensor([1])
+    mone = one * -1
+
     criterion = nn.CrossEntropyLoss()
     criterion_bce = nn.BCELoss()
+    criterion_l1 = nn.L1Loss()
     
     state = (Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)),
      Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)))
@@ -90,12 +94,16 @@ def run(save_path, args):
         label_real, label_fake = label_real.cuda(), label_fake.cuda()
         criterion_bce = criterion_bce.cuda()
         criterion = criterion.cuda()
+        criterion_l1 = criterion_l1.cuda()
 
     label_real, label_fake = Variable(label_real), Variable(label_fake)
 
     # optimizerE = torch.optim.Adam(encoder.parameters(), lr= 0.1 *args.learning_rate)
-    optimizerG = torch.optim.Adam(netG.parameters(), lr=args.learning_rate)
-    optimizerD = torch.optim.Adam(netD.parameters(), lr=args.learning_rate)
+    # optimizerG = torch.optim.Adam(netG.parameters(), lr=args.learning_rate)
+    # optimizerD = torch.optim.Adam(netD.parameters(), lr=args.learning_rate)
+
+    optimizerD = torch.optim.RMSprop(netD.parameters(), lr = args.learning_rate)
+    optimizerG = torch.optim.RMSprop(netG.parameters(), lr = args.learning_rate)
 
     # Train the Models
     total_step = len(train_data_loader)
@@ -112,49 +120,50 @@ def run(save_path, args):
                 p.requires_grad = True   # they are set to False below in netG update
             
             # Set mini-batch dataset
-            images = Variable(images)
-            captions = Variable(captions)
-            if torch.cuda.is_available():
-                images = images.cuda()
-                captions = captions.cuda()
-
+            images = Variable(images.cuda())
+            captions = Variable(captions.cuda())
             targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
+
+            for p in netD.parameters():
+                p.data.clamp_(args.clamp_lower, args.clamp_upper)
 
             netG.zero_grad()
             netD.zero_grad()
 
             features = encoder(images).detach()
-            outputs_free, hidden_free = netG(features, captions, lengths, state, teacher_forced=False)
 
             ## Discriminator Step
-            output_real      = netD(targets,lengths,batch_sizes, label=True)
-            label_real.data.resize_(output_real.size(0)).fill_(real_label)
+            errD_real = netD(targets,lengths,batch_sizes, label=True)
+            errD_real.backward(one)
 
-            D_loss_real      = torch.mean(torch.abs(output_real - label_real)) #criterion(output_real, label_real)
+            outputs_free, hidden_free = netG(features, lengths, state)
             
-            output_fake      = netD(outputs_free.detach(),lengths,batch_sizes, label=False)
-            label_fake.data.resize_(output_fake.size(0)).fill_(fake_label)
-            D_loss_fake      = torch.mean(torch.abs(output_fake - label_fake)) #criterion(output_fake, label_fake)
+            D_fake_input = Variable(outputs_free.data, requires_grad=True)
+            errD_fake    = netD(D_fake_input,lengths,batch_sizes, label=False)
+            errD_fake.backward(mone)
 
-            if not D_accuracy > 0.99:
-                D_loss.backward()
-                optimizerD.step()
+            #torch.autograd.backward(errD_fake,Variable(mone), create_graph=True)
+
+            #D_loss_norm = torch.mean((D_fake_input.grad - 1) ** 2)
+            # torch.autograd.backward(errD_fake,D_loss_norm, create_graph=True)
+            #D_loss_norm.backward()
+            errD = errD_real - errD_fake
+            optimizerD.step()
 
             ## Generator Step
             for p in netD.parameters():
                 p.requires_grad = False # to avoid computation
             netG.zero_grad()
 
-            output_free = netD(outputs_free,lengths,batch_sizes, label=False)
-            G_loss = torch.mean(torch.abs(output_free - label_real))#criterion(output_free, label_real)
-            G_loss.backward()
-            optimizerG.step()
+            errG  = netD(outputs_free,lengths,batch_sizes, label=False)
+            errG.backward(one)
+            #optimizerG.step()
 
             # Print log info
             if total_iterations % args.log_step == 0:
-                print('Epoch [%d/%d], Step [%d/%d], G_Loss: %.4f, D_Loss: %5.4f, Perplexity: %5.4f, D_Accuracy: %5.4f'
+                print('Epoch [%d/%d], Step [%d/%d], G_Loss: %.4f, D_Loss: %5.4f'
                       %(epoch, args.num_epochs, i, total_step, 
-                        G_loss.data[0], D_loss.data[0], np.exp(mle_loss.data[0]), D_accuracy)) 
+                        errG.data[0], errD.data[0])) 
 
             if total_iterations % 100 == 0:
                 print("")
@@ -192,8 +201,8 @@ def run(save_path, args):
 
 
             if total_iterations % args.tb_log_step == 0:
-                log_value('Loss', mle_loss.data[0], total_iterations)
-                log_value('Perplexity', np.exp(mle_loss.data[0]), total_iterations)
+                log_value('D_loss', errD.data[0], total_iterations)
+                log_value('G_loss', errG.data[0], total_iterations)
 
             if (total_iterations+1) % 10000 == 0:
                 validate(encoder, netG, val_data_loader, val_state, criterion, vocab, total_iterations)
@@ -346,13 +355,15 @@ if __name__ == '__main__':
                         help='dimension of gru hidden states')
     parser.add_argument('--num_layers', type=int , default=1 ,
                         help='number of layers in gru')
-    parser.add_argument('--pretrained', type=str, default='logs/coco/03052017180131/decoder-1-20000.pkl')#, default='-2-20000.pkl')
+    parser.add_argument('--pretrained', type=str)#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--num_workers', type=int, default=2)
-    parser.add_argument('--learning_rate', type=float, default=0.0001)
+    parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')
+    parser.add_argument('--clamp_lower', type=float, default=-0.01)
+    parser.add_argument('--clamp_upper', type=float, default=0.01)
     args = parser.parse_args()
     print(args)
 
