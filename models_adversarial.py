@@ -518,10 +518,10 @@ class D(nn.Module):
         #self.fc = nn.Linear(2048, embed_size)
 
         self.dropout = nn.Dropout(0.5)
-        self.sigmoid = nn.Sigmoid()
-        self.log_softmax = nn.LogSoftmax()
+        # self.sigmoid = nn.Sigmoid()
+        # self.log_softmax = nn.LogSoftmax()
 
-        self.bn2 = nn.BatchNorm1d(fc_embed_size, momentum=0.01)
+        #self.bn2 = nn.BatchNorm1d(fc_embed_size, momentum=0.01)
         #self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
 
         self.relu = nn.ReLU()
@@ -583,8 +583,8 @@ class D(nn.Module):
 
         x = torch.cat([ hiddens[ i, lengths[i] - 1 ].unsqueeze(0) for i in range( len(lengths) ) ], 0)
 
-        x = self.relu(self.bn2(self.linear(x)))
-        x = self.relu(self.bn2(self.linear2(x)))
+        x = self.relu(self.linear(x))
+        x = self.relu(self.linear2(x))
         x = self.linear3(x)
 
         return self.log_softmax(x)
