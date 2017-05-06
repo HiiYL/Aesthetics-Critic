@@ -63,7 +63,7 @@ def run(save_path, args):
     # Build the models
     encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True))
     netG = G(args.embed_size, args.hidden_size, vocab, args.num_layers)
-    netD = D(args.embed_size, args.hidden_size, vocab, args.num_layers)
+    #netD = D(args.embed_size, args.hidden_size, vocab, args.num_layers)
     if args.pretrained:
         print("[!]loading pretrained model....")
         netG.load_state_dict(torch.load(args.pretrained))
@@ -84,7 +84,7 @@ def run(save_path, args):
     if torch.cuda.is_available():
         encoder = encoder.cuda()
         netG.cuda()
-        netD.cuda()
+        #netD.cuda()
         state = [s.cuda() for s in state]
         val_state = [s.cuda() for s in val_state]
         label_real, label_fake = label_real.cuda(), label_fake.cuda()
@@ -95,7 +95,7 @@ def run(save_path, args):
 
     # optimizerE = torch.optim.Adam(encoder.parameters(), lr= 0.1 *args.learning_rate)
     optimizerG = torch.optim.Adam(netG.parameters(), lr=args.learning_rate)
-    optimizerD = torch.optim.Adam(netD.parameters(), lr=args.learning_rate)
+    #optimizerD = torch.optim.Adam(netD.parameters(), lr=args.learning_rate)
 
     # Train the Models
     total_step = len(train_data_loader)
@@ -108,8 +108,6 @@ def run(save_path, args):
         #     for param_group in optimizer.param_groups:
         #         param_group['lr'] = lr
         for i, (images, captions, lengths, img_id) in enumerate(train_data_loader):
-            for p in netD.parameters():  # reset require_grad
-                p.requires_grad = True   # they are set to False below in netG update
             
             # Set mini-batch dataset
             images = Variable(images)
@@ -121,59 +119,48 @@ def run(save_path, args):
             targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
 
             netG.zero_grad()
-            netD.zero_grad()
+            #netD.zero_grad()
 
             features = encoder(images).detach()
             out, hidden, embeddings   = netG(features, captions, lengths, state, teacher_forced=True)
-            outputs_free, hidden_free = netG(features, captions, lengths, state, teacher_forced=False)
+            # outputs_free, hidden_free = netG(features, captions, lengths, state, teacher_forced=False)
 
-            ## Discriminator Step
-            output_real      = netD(targets,lengths,batch_sizes, label=True)
-            label_real.data.resize_(output_real.size(0)).fill_(real_label)
+            # ## Discriminator Step
+            # output_real      = netD(targets,lengths,batch_sizes, label=True)
+            # label_real.data.resize_(output_real.size(0)).fill_(real_label)
 
-            D_loss_real      = criterion(output_real, label_real)
+            # D_loss_real      = criterion(output_real, label_real)
             
-            output_fake      = netD(outputs_free.detach(),lengths,batch_sizes, label=False)
-            label_fake.data.resize_(output_fake.size(0)).fill_(fake_label)
-            D_loss_fake      = criterion(output_fake, label_fake)
+            # output_fake      = netD(outputs_free.detach(),lengths,batch_sizes, label=False)
+            # label_fake.data.resize_(output_fake.size(0)).fill_(fake_label)
+            # D_loss_fake      = criterion(output_fake, label_fake)
 
-            correct_real = torch.mean((torch.max(output_real,1)[1].data == label_real.data).float())
-            correct_fake = torch.mean((torch.max(output_fake,1)[1].data == label_fake.data).float())
-            D_accuracy = 0.5 * ( correct_real + correct_fake )
-            D_loss = 0.5 * ( D_loss_real + D_loss_fake )
+            # correct_real = torch.mean((torch.max(output_real,1)[1].data == label_real.data).float())
+            # correct_fake = torch.mean((torch.max(output_fake,1)[1].data == label_fake.data).float())
+            # D_accuracy = 0.5 * ( correct_real + correct_fake )
+            # D_loss = 0.5 * ( D_loss_real + D_loss_fake )
 
-            if not D_accuracy > 0.99:
-                D_loss.backward()
-                optimizerD.step()
+            # if not D_accuracy > 0.99:
+            #     D_loss.backward()
+            #     optimizerD.step()
 
             ## Generator Step
-            for p in netD.parameters():
-                p.requires_grad = False # to avoid computation
             netG.zero_grad()
 
-            output_free = netD(outputs_free,lengths,batch_sizes, label=False)
-            gan_loss = criterion(output_free, label_real)
+            #output_free = netD(outputs_free,lengths,batch_sizes, label=False)
+            #gan_loss = criterion(output_free, label_real)
 
             mle_loss = criterion(out, targets)
-            if D_accuracy > 0.75:
-                G_loss = mle_loss + 0.5 * gan_loss #+ gan_loss_real
-            else:
-                G_loss = mle_loss
-            G_loss.backward()
+            mle_loss.backward()
             optimizerG.step()
 
             # Print log info
             if total_iterations % args.log_step == 0:
-                print('Epoch [%d/%d], Step [%d/%d], G_Loss: %.4f, D_Loss: %5.4f, Perplexity: %5.4f, D_Accuracy: %5.4f'
-                      %(epoch, args.num_epochs, i, total_step, 
-                        G_loss.data[0], D_loss.data[0], np.exp(mle_loss.data[0]), D_accuracy)) 
+                print('Epoch [%d/%d], Step [%d/%d] Loss: %5.4f, Perplexity: %5.4f'
+                      %(epoch, args.num_epochs, i, total_step,  mle_loss.data[0], np.exp(mle_loss.data[0]))) 
 
             if total_iterations % 100 == 0:
                 print("")
-                sampled_ids_free = torch.max(outputs_free,1)[1].squeeze()
-                sampled_ids_free = pad_packed_sequence([sampled_ids_free, batch_sizes], batch_first=True)[0]
-                sampled_ids_free = sampled_ids_free.cpu().data.numpy()
-
                 sampled_ids_forced = torch.max(out,1)[1].squeeze()
                 sampled_ids_forced = pad_packed_sequence([sampled_ids_forced, batch_sizes], batch_first=True)[0]
                 sampled_ids_forced = sampled_ids_forced.cpu().data.numpy()
@@ -188,9 +175,10 @@ def run(save_path, args):
                     return ' '.join(sampled_caption)
 
                 groundtruth_caption = captions.cpu().data.numpy()
-                for i, comment in enumerate(sampled_ids_free):
+                for i in range(len(sampled_ids_forced)):
                     if i > 1:
                         break
+
                     sampled_captions = ""
 
                     sampled_caption   = word_idx_to_sentence(groundtruth_caption[i])
@@ -198,9 +186,6 @@ def run(save_path, args):
 
                     sampled_caption =  word_idx_to_sentence(sampled_ids_forced[i])
                     sampled_captions += "[T]{} \n".format(sampled_caption)
-
-                    sampled_caption =  word_idx_to_sentence(comment)
-                    sampled_captions += "[F]{} \n".format(sampled_caption)
 
                     print(sampled_captions)
             # Save the model
@@ -214,7 +199,7 @@ def run(save_path, args):
                 log_value('Loss', mle_loss.data[0], total_iterations)
                 log_value('Perplexity', np.exp(mle_loss.data[0]), total_iterations)
 
-            if (total_iterations+1) % 10000 == 0:
+            if (total_iterations+1) % 1000 == 0:
                 validate(encoder, netG, val_data_loader, val_state, criterion, vocab, total_iterations)
 
             total_iterations += 1
@@ -279,6 +264,7 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
                 sampled_caption.append(word)
 
         sentence = ' '.join(sampled_caption)
+        print(sentence)
         item_json = {"image_id": img_id[0], "caption": sentence}
         val_json.append(item_json)
         # outputs, _ = netG(features, captions, lengths, state, teacher_forced=False)

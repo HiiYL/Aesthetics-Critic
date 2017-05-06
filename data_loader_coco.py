@@ -50,7 +50,7 @@ class CocoDataset(data.Dataset):
         return image, target, img_id
 
     def __len__(self):
-        return len(self.ids)
+        return len(self.ids) - 1
 
 class CocoValDataset(data.Dataset):
     """COCO Custom Dataset compatible with torch.utils.data.DataLoader."""

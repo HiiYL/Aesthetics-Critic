@@ -313,6 +313,15 @@ class G(nn.Module):
             else:
                 break
 
+    class Node:
+        def __init__(choice_list, confidence, states):
+            self.choice_list = choice_list
+            self.confidence = confidence
+            self.states = states
+
+    class NodeList:
+        def __init__():
+            self.nodes = []
 
     def beamSearch(self, features, states, n=1, diverse_gamma=0.0):
         features = self.conv(features)
@@ -341,6 +350,8 @@ class G(nn.Module):
             best_confidence = [None] * n * (n - len(terminated_choices))
             best_states = [None] * n * (n - len(terminated_choices))
 
+            # node_list = [None] * n * (n - len(terminated_choices))
+
             # for each choice
             for choice_index, choice in enumerate(best_choices):
 
@@ -361,6 +372,10 @@ class G(nn.Module):
                     item = torch.cat((choice, inner_choice))
 
                     position = choice_index * n + rank
+
+                    confidence = current_confidence + inner_confidences[rank] - (diverse_gamma * (rank + 1))
+
+                    #node_list[position] = Node(choice_list=item, confidence=confidence, states=out_states)
 
                     best_list[position]   = item
                     best_states[position] = out_states
