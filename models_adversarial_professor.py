@@ -104,6 +104,7 @@ class G(nn.Module):
         self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
         self.hidden_size = hidden_size
         self.gru_cell = nn.GRUCell(embed_size, hidden_size)
+        #self.gru_cell_2 = nn.GRUCell(hidden_size, hidden_size)
         self.linear_fc = nn.Linear(hidden_size * 2, hidden_size)
 
         self.attn = nn.Linear( hidden_size * 2, hidden_size)

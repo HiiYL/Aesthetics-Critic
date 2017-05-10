@@ -97,8 +97,9 @@ class G(nn.Module):
 
         self.vocab = vocab
         self.vocab_size = len(vocab)
-        self.embed = nn.Embedding(self.vocab_size, embed_size)
         self.linear = nn.Linear(hidden_size, self.vocab_size)
+        self.linear2 = nn.Linear(self.vocab_size, embed_size)
+
         self.conv = nn.Conv2d(2048, 32, kernel_size=3, stride=1, padding=1)
         self.fc = nn.Linear(2048, embed_size)
         self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
@@ -117,7 +118,7 @@ class G(nn.Module):
     
     def init_weights(self):
         """Initialize weights."""
-        self.embed.weight.data.uniform_(-0.1, 0.1)
+        self.linear2.weight.data.uniform_(-0.1, 0.1)
 
         self.linear.weight.data.uniform_(-0.1, 0.1)
         self.linear.bias.data.fill_(0)
@@ -144,7 +145,6 @@ class G(nn.Module):
          
     def forward(self, features, captions, lengths, state, teacher_forced=True):
         """Decode image feature vectors and generates captions."""
-        #features = self.adaptive_pool(features)
         features = self.conv(features)
         features = features.view(features.size(0), -1)
         features = self.bn(self.fc(features))
@@ -183,135 +183,25 @@ class G(nn.Module):
 
             hx = self.gru_attention(inputs, hx, features)
             outputs = self.linear(hx)
-            predicted = outputs.max(1)[1]
-            inputs = self.embed(predicted).view(predicted.size(0), -1)
+            outputs = self.gumbel_sample(outputs, tau=0.5)
+            #predicted = outputs.max(1)[1]
+            inputs = self.linear2(outputs).view(outputs.size(0), -1)
 
             hiddens_tensor[:,i,:] = hx
             output_tensor [:,i,:] = outputs
 
         output_tensor, _ = pack_padded_sequence(output_tensor, lengths, batch_first=True)
         #hiddens_tensor, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
-        return self.softmax(output_tensor), hiddens_tensor
+        return output_tensor, hiddens_tensor
 
-    def sample(self, features, states):
-        features = self.conv(features)
-        features = features.view(features.size(0), -1)
-        features = self.bn(self.fc(features))
-
-        inputs = features
-        sampled_ids = []
-        hx = states[0].squeeze()
-        for i in range(50):
-            if hx.data.size(0) > inputs.data.size(0):
-                hx = hx[:inputs.size(0)]
-
-            hx = self.gru_attention(inputs, hx, features)
-            outputs = self.log_softmax(self.linear(hx))
-            predicted = outputs.max(1)[1]
-            inputs = self.embed(predicted).view(predicted.size(0), -1)
-            sampled_ids.append(predicted)
-
-        sampled_ids = torch.cat(sampled_ids, 1)
-        return sampled_ids
-
-    def beamSearchBatched(self, features, states, n=3):
-        features = self.conv(features)
-        features = features.view(features.size(0), -1)
-        features = self.bn(self.fc(features))
-
-        inputs = features
-
-        hx = states[0].squeeze()
-
-        hx = self.gru_attention(inputs, hx, features)   # (batch_size, 1, hidden_size)
-        outputs = self.linear(hx)                    # (batch_size, vocab_size)
-        confidences, best_choices = outputs.topk(n)
-
-        cached_states = [hx] * n
-
-        end_idx = self.vocab.word2idx["<end>"]
-        
-        #best_choices = best_choices[:,0]
-        terminated_choices = []
-        terminated_confidences = []
-
-
-        # one loop for each word
-        for word_index in range(50):
-            #print(best_choices)
-            best_list = [None] * n * (n - len(terminated_choices))
-            best_confidence = [None] * n * (n - len(terminated_choices))
-            best_states = [None] * n * (n - len(terminated_choices))
-
-            print(best_choices)
-            # for each choice
-            for choice_index, choice in enumerate(best_choices.transpose(-1,0)):
-                # print(choice)
-                input_choice = choice[word_index] if word_index != 0 else choice
-                # print(input_choice)
-                inputs = self.embed(input_choice)
-                # print(inputs)
-                current_confidence = confidences[:,choice_index]
-
-                hx = self.gru_attention(inputs=inputs,hx=cached_states[choice_index], features=features)        # (batch_size, 1, hidden_size)
-                outputs = self.linear(hx)                                                                       # (batch_size, vocab_size)
-
-                # pick n best nodes for each possible choice
-                inner_confidences, inner_best_choices = outputs.topk(n)
-
-                #inner_confidences = inner_confidences[0]
-                inner_best_choices = inner_best_choices.transpose(-1,0)
-                inner_confidences  = inner_confidences.transpose(-1,0)
-                print("---- LOOP ----")
-                #print(outputs)
-                for inner_choice_idx, inner_choice in enumerate(inner_best_choices):
-                    print(inner_choice)
-
-                    if word_index != 0:
-                        choice = best_choices[choice_index]
-
-                    item = torch.cat((choice, inner_choice))
-                    #print(item)
-
-
-                    position = choice_index * n + inner_choice_idx
-
-                    best_list[position]   = item
-                    best_states[position] = hx
-                    best_confidence[position] = inner_confidences[inner_choice_idx] + current_confidence
-
-
-            best_confidence_tensor = torch.cat(best_confidence, 0)
-            _ , topk = best_confidence_tensor.topk(n - len(terminated_choices))
-
-            topk_index = topk.data.int().cpu().numpy()
-
-            ## Filter nodes that contains termination token '<end>'
-            best_choices_index = [ index for index in topk_index if end_idx not in best_list[index].data.int() ]
-
-            terminated_index   = list(set(topk_index) - set(best_choices_index))
-            terminated_choices.extend([ best_list[index] for index in terminated_index ])
-            terminated_confidences.extend([ best_confidence_tensor[index].data.cpu().numpy()[0] for index in terminated_index ])
-
-
-            ## If there is still nodes to evaluate
-            if len(best_choices_index) > 0:
-                best_choices  = [ best_list[index] for index in best_choices_index ]
-                #cached_states = [ best_states[index] for index in best_choices_index ]
-                confidences   = [ best_confidence_tensor[index] for index in best_choices_index ]
-                confidences   = torch.cat(confidences,0).unsqueeze(0)
-            else:
-                break
-
-    class Node:
-        def __init__(choice_list, confidence, states):
-            self.choice_list = choice_list
-            self.confidence = confidence
-            self.states = states
-
-    class NodeList:
-        def __init__():
-            self.nodes = []
+    def gumbel_sample(self,input, tau):
+        noise = torch.rand(input.size()).cuda()
+        noise.add_(1e-9).log_().neg_()
+        noise.add_(1e-9).log_().neg_()
+        noise = Variable(noise)
+        x = (input + noise) / tau
+        x = F.softmax(x.view(input.size(0), -1))
+        return x.view_as(input)
 
     def beamSearch(self, features, states, n=1, diverse_gamma=0.0):
         features = self.conv(features)
@@ -409,10 +299,7 @@ class D_Attention(nn.Module):
 
         self.vocab = vocab
         self.vocab_size = len(vocab)
-
-        self.embed = nn.Embedding(self.vocab_size, embed_size)
         self.fc2    = nn.Linear(self.vocab_size, embed_size)
-
 
         self.linear = nn.Linear(hidden_size, hidden_size)
         self.linear2 = nn.Linear(hidden_size, hidden_size)
@@ -434,9 +321,6 @@ class D_Attention(nn.Module):
     
     def init_weights(self):
         """Initialize weights."""
-        self.embed.weight.data.uniform_(-0.1, 0.1)
-        #self.fc2.weight = self.embed.weight
-
         self.linear.weight.data.uniform_(-0.1, 0.1)
         self.linear.bias.data.fill_(0)
         self.linear2.weight.data.uniform_(-0.1, 0.1)
@@ -458,14 +342,11 @@ class D_Attention(nn.Module):
         attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
         attn_applied = features * attn_weights
         inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
-
         hx = self.gru_cell(inputs, hx)
-
         return hx
 
     def forward(self, features, captions, lengths, states, batch_sizes):
         """Decode image feature vectors and generates captions."""
-        #features = self.adaptive_pool(features)
         features = self.conv(features)
         features = features.view(features.size(0), -1)
         features = self.fc(features)
@@ -474,15 +355,10 @@ class D_Attention(nn.Module):
 
     def _forward_forced_cell(self, features, captions, lengths, states, batch_sizes):
         hiddens_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
-        if isinstance(captions.data, torch.cuda.LongTensor):
-            embeddings = self.embed(captions)
-        else:
-            embeddings = self.fc2(captions)
+        embeddings = self.fc2(captions)
 
         embeddings = PackedSequence(data=embeddings, batch_sizes=batch_sizes)
         embeddings = pad_packed_sequence(embeddings, batch_first=True)[0]
-
-        #print(embeddings)
         embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
         hx = states[0].squeeze()
         for i in range(lengths[0]):
@@ -494,8 +370,8 @@ class D_Attention(nn.Module):
             hiddens_tensor[ :, i, :] = hx
 
         x = torch.cat([ hiddens_tensor[ i, lengths[i] - 1 ].unsqueeze(0) for i in range( len(lengths) ) ], 0)
-        x = self.relu(self.linear(x))
-        x = self.relu(self.linear2(x))
+        #x = self.relu(self.linear(x))
+        #x = self.relu(self.linear2(x))
         x = self.linear3(x)
         return x.mean(0).view(1)
 

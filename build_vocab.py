@@ -4,7 +4,7 @@ import argparse
 from collections import Counter
 from pandas import HDFStore
 import pandas as pd
-
+import string
 
 class Vocabulary(object):
     """Simple vocabulary wrapper."""
@@ -55,9 +55,13 @@ def build_vocab(dataframe_path, threshold=5):
     vocab.add_word('<end>')
     vocab.add_word('<unk>')
 
+    chars = string.ascii_lowercase + string.digits + string.punctuation + string.whitespace
     # Adds the words to the vocabulary.
-    for i, word in enumerate(words):
+    for i, word in enumerate(chars):
         vocab.add_word(word)
+
+    # for i in range(0,128):
+    #     vocab.add_word(chr(i))
     return vocab
 
 def main(args):
@@ -65,7 +69,7 @@ def main(args):
                         threshold=args.threshold)
     vocab_path = args.vocab_path
     with open(vocab_path, 'wb') as f:
-        pickle.dump(vocab, f, pickle.HIGHEST_PROTOCOL)
+        pickle.dump(vocab, f)
     print("Total vocabulary size: %d" %len(vocab))
     print("Saved the vocabulary wrapper to '%s'" %vocab_path)
 

@@ -13,9 +13,9 @@ cudnn.benchmark = True
 
 import numpy as np
 import os
-from data_loader_coco import get_loader 
+from data_loader import get_loader 
 from build_vocab import Vocabulary
-from models_adversarial import EncoderCNN, G, D, D_Attention, InceptionNet
+from models_adversarial_professor import EncoderCNN, G, D, InceptionNet
 import pickle
 import datetime
 
@@ -26,15 +26,15 @@ from tensorboard_logger import configure, log_value
 
 
 ## Ms COCO eval code imports
-from pycocotools.coco import COCO
-from pycocoevalcap.eval import COCOEvalCap
-import matplotlib.pyplot as plt
-import skimage.io as io
+# from pycocotools.coco import COCO
+# from pycocoevalcap.eval import COCOEvalCap
+# import matplotlib.pyplot as plt
+# import skimage.io as io
 
-import json
-from json import encoder
-encoder.FLOAT_REPR = lambda o: format(o, '.3f')
-import os
+# import json
+# from json import encoder
+# encoder.FLOAT_REPR = lambda o: format(o, '.3f')
+# import os
 
 def run(save_path, args):
     # Create model directory
@@ -53,17 +53,25 @@ def run(save_path, args):
     with open(args.vocab_path, 'rb') as f:
         vocab = pickle.load(f)
     
-    train_data_loader = get_loader("train", vocab, 
+
+    training_location = "data/{}/train".format(args.dataset)
+    test_location = "data/{}/test".format(args.dataset)
+    # Build data loader
+    train_data_loader = get_loader(training_location, args.comments_path, vocab, 
                              transform, args.batch_size,
-                             shuffle=True, num_workers=args.num_workers)
-    val_data_loader = get_loader("val", vocab, 
-                             transform, 1,
-                             shuffle=False, num_workers=args.num_workers)
+                             shuffle=True, num_workers=args.num_workers) 
+
+    # train_data_loader = get_loader("train", vocab, 
+    #                          transform, args.batch_size,
+    #                          shuffle=True, num_workers=args.num_workers)
+    # val_data_loader = get_loader("val", vocab, 
+    #                          transform, 1,
+    #                          shuffle=False, num_workers=args.num_workers)
 
     # Build the models
     encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True))
     netG = G(args.embed_size, args.hidden_size, vocab, args.num_layers)
-    netD = D_Attention(args.embed_size, args.hidden_size, vocab, args.num_layers)
+    netD = D(args.embed_size, args.hidden_size, vocab, args.num_layers)
     if args.pretrained:
         print("[!]loading pretrained model....")
         netG.load_state_dict(torch.load(args.pretrained))
@@ -119,8 +127,13 @@ def run(save_path, args):
 
     for epoch in range(args.num_epochs):
 
-        for i, (images, captions, lengths, img_id) in enumerate(train_data_loader):
+        for i, (images, captions, lengths) in enumerate(train_data_loader):
+            for p in netD.parameters():  # reset require_grad
+                p.requires_grad = True   # they are set to False below in netG update
 
+            for p in netD.parameters():
+               p.data.clamp_(args.clamp_lower, args.clamp_upper)
+            
             # Set mini-batch dataset
             images = Variable(images)
             captions = Variable(captions)
@@ -128,30 +141,18 @@ def run(save_path, args):
                 images = images.cuda()
                 captions = captions.cuda()
 
-
-            for p in netD.parameters():  # reset require_grad
-                p.requires_grad = True   # they are set to False below in netG update
-
-            for p in netD.parameters():
-               p.data.clamp_(args.clamp_lower, args.clamp_upper)
-            
-
             targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
 
             netG.zero_grad()
             netD.zero_grad()
 
-            y_onehot.resize_(targets.size(0),len(vocab))
-            y_onehot.zero_()
-            y_onehot.scatter_(1,targets.data.unsqueeze(1),1)
-
             features = encoder(images).detach()
-            #out, hidden, embeddings   = netG(features, captions, lengths, state, teacher_forced=True)
-            outputs_free, _ = netG(features, captions, lengths, state, teacher_forced=False)
+            out     , hidden        = netG(features, captions, lengths, state, teacher_forced=True)
+            out_free, hidden_free   = netG(features, captions, lengths, state, teacher_forced=False)
 
             ## Discriminator Step
-            D_loss_real     = netD(features, Variable(y_onehot)   , lengths, state, batch_sizes)
-            D_loss_fake     = netD(features, outputs_free.detach(), lengths, state, batch_sizes)
+            D_loss_real     = netD(hidden.detach()     , lengths, batch_sizes)
+            D_loss_fake     = netD(hidden_free.detach(), lengths, batch_sizes)
 
             # real_data = Variable(y_onehot)
             # alpha.resize_(real_data.size(0), 1).uniform_(0, 1)
@@ -185,9 +186,11 @@ def run(save_path, args):
                 for p in netD.parameters():
                     p.requires_grad = False # to avoid computation
                 netG.zero_grad()
-
-                D_loss_fake = netD(features, outputs_free,lengths, state, batch_sizes)
-                G_loss = -D_loss_fake
+                #out = pack_padded_sequence(out, lengths, batch_first=True)
+                G_loss_mle      = criterion(out, targets)
+                G_loss_professor = -netD(hidden_free, lengths, batch_sizes)
+                
+                G_loss = G_loss_mle + G_loss_professor
                 G_loss.backward()
                 optimizerG.step()
                 gen_iterations += 1
@@ -195,13 +198,13 @@ def run(save_path, args):
 
                 # Print log info
                 #if total_iterations % args.log_step == 0:
-                print('Epoch [%d/%d], Step [%d/%d], G_Loss: %.4f, D_Loss: %5.4f'
+                print('Epoch [%d/%d], Step [%d/%d], G_Loss: %.4f, D_Loss: %5.4f, G_Loss_MLE: %.4f, G_Loss_Prof: %.4f'
                       %(epoch, args.num_epochs, i, total_step, 
-                        G_loss.data[0], D_loss.data[0])) 
+                        G_loss.data[0], D_loss.data[0], G_loss_mle.data[0], G_loss_professor.data[0])) 
 
                 if total_iterations % 100 == 0:
                     print("")
-                    sampled_ids_free = torch.max(outputs_free,1)[1].squeeze()
+                    sampled_ids_free = torch.max(out_free,1)[1].squeeze()
                     sampled_ids_free = pad_packed_sequence([sampled_ids_free, batch_sizes], batch_first=True)[0]
                     sampled_ids_free = sampled_ids_free.cpu().data.numpy()
 
@@ -239,121 +242,121 @@ def run(save_path, args):
                 log_value('D_Loss', D_loss.data[0], total_iterations)
                 log_value('G_Loss', G_loss.data[0], total_iterations)
 
-            if (total_iterations) % 30000 == 0:
-                validate(encoder, netG, val_data_loader, val_state, criterion, vocab, total_iterations)
+            #if (total_iterations) % 30000 == 0:
+            #    validate(encoder, netG, val_data_loader, val_state, criterion, vocab, total_iterations)
 
             
 
 
 
-def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iterations):
-    ### MS COCO Eval code prepation
-    ## set up file names and pathes
-    dataDir='data/coco'
-    logDir=save_path
-    dataType='val2014'
-    algName = 'fakecap'
-    annFile='%s/captions_%s_karpathy_split.json'%(dataDir,dataType)
-    subtypes=['results', 'evalImgs', 'eval']
-    [resFile, evalImgsFile, evalFile]= \
-    ['%s/captions_%s_%s_%s.json'%(logDir,dataType,algName,subtype) for subtype in subtypes]
-    ###
+# def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iterations):
+#     ### MS COCO Eval code prepation
+#     ## set up file names and pathes
+#     dataDir='data/coco'
+#     logDir=save_path
+#     dataType='val2014'
+#     algName = 'fakecap'
+#     annFile='%s/captions_%s_karpathy_split.json'%(dataDir,dataType)
+#     subtypes=['results', 'evalImgs', 'eval']
+#     [resFile, evalImgsFile, evalFile]= \
+#     ['%s/captions_%s_%s_%s.json'%(logDir,dataType,algName,subtype) for subtype in subtypes]
+#     ###
 
 
-    print('validating...')
-    netG.eval()
-    encoder.eval()
+#     print('validating...')
+#     netG.eval()
+#     encoder.eval()
 
-    for parameter in encoder.parameters():
-        parameter.requires_grad=False
-    for parameter in netG.parameters():
-        parameter.requires_grad=False
+#     for parameter in encoder.parameters():
+#         parameter.requires_grad=False
+#     for parameter in netG.parameters():
+#         parameter.requires_grad=False
 
 
 
-    val_json = []
-    total_val_step = len(val_data_loader)
-    for i, (images, captions, lengths, img_id) in enumerate(val_data_loader):
-        images = Variable(images, volatile=True)
-        captions = Variable(captions, volatile=True)
-        if torch.cuda.is_available():
-            images = images.cuda()
-            captions = captions.cuda()
-        targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
+#     val_json = []
+#     total_val_step = len(val_data_loader)
+#     for i, (images, captions, lengths, img_id) in enumerate(val_data_loader):
+#         images = Variable(images, volatile=True)
+#         captions = Variable(captions, volatile=True)
+#         if torch.cuda.is_available():
+#             images = images.cuda()
+#             captions = captions.cuda()
+#         targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
 
-        # Forward, Backward and Optimize
-        features = encoder(images)
+#         # Forward, Backward and Optimize
+#         features = encoder(images)
 
-        sampled_ids_list, terminated_confidences = netG.beamSearch(features, state, n=10, diverse_gamma=0.5)
-        sampled_ids_list = np.array([ sampled_ids.cpu().data.numpy() for sampled_ids in sampled_ids_list ])
+#         sampled_ids_list, terminated_confidences = netG.beamSearch(features, state, n=10, diverse_gamma=0.5)
+#         sampled_ids_list = np.array([ sampled_ids.cpu().data.numpy() for sampled_ids in sampled_ids_list ])
         
-        # Decode word_ids to words
-        sorted_idx = np.argsort(terminated_confidences)
-        sampled_ids_sorted = sorted(zip(terminated_confidences,sampled_ids_list), reverse=True)
+#         # Decode word_ids to words
+#         sorted_idx = np.argsort(terminated_confidences)
+#         sampled_ids_sorted = sorted(zip(terminated_confidences,sampled_ids_list), reverse=True)
 
-        _, sampled_ids = sampled_ids_sorted[0]
+#         _, sampled_ids = sampled_ids_sorted[0]
 
-        sampled_caption = []
-        for word_id in sampled_ids:
-            word = vocab.idx2word[word_id]
-            if word == '<end>':
-                break
-            if word != '<start>' and word != '<pad>':
-                sampled_caption.append(word)
+#         sampled_caption = []
+#         for word_id in sampled_ids:
+#             word = vocab.idx2word[word_id]
+#             if word == '<end>':
+#                 break
+#             if word != '<start>' and word != '<pad>':
+#                 sampled_caption.append(word)
 
-        sentence = ' '.join(sampled_caption)
-        item_json = {"image_id": img_id[0], "caption": sentence}
-        val_json.append(item_json)
-        # outputs, _ = netG(features, captions, lengths, state, teacher_forced=False)
-        # sampled_ids = torch.max(outputs,1)[1].squeeze()
-        # sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
-        # sampled_ids = sampled_ids.cpu().data.numpy()
-        # loss        = criterion(outputs, targets)
+#         sentence = ' '.join(sampled_caption)
+#         item_json = {"image_id": img_id[0], "caption": sentence}
+#         val_json.append(item_json)
+#         # outputs, _ = netG(features, captions, lengths, state, teacher_forced=False)
+#         # sampled_ids = torch.max(outputs,1)[1].squeeze()
+#         # sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
+#         # sampled_ids = sampled_ids.cpu().data.numpy()
+#         # loss        = criterion(outputs, targets)
 
-        # for j, comment in enumerate(sampled_ids):
-        #     sampled_caption = []
-        #     for word_id in comment:
-        #         word = vocab.idx2word[word_id]
-        #         if word == '<end>':
-        #             break
-        #         elif word == '<start>' and word == '<pad>':
-        #             continue
-        #         else:
-        #             sampled_caption.append(word)
+#         # for j, comment in enumerate(sampled_ids):
+#         #     sampled_caption = []
+#         #     for word_id in comment:
+#         #         word = vocab.idx2word[word_id]
+#         #         if word == '<end>':
+#         #             break
+#         #         elif word == '<start>' and word == '<pad>':
+#         #             continue
+#         #         else:
+#         #             sampled_caption.append(word)
 
-        #     item_json = {"image_id": img_id[j], "caption":' '.join(sampled_caption) }
-        #     val_json.append(item_json)
+#         #     item_json = {"image_id": img_id[j], "caption":' '.join(sampled_caption) }
+#         #     val_json.append(item_json)
 
-        # # Print log info
-        if i % args.log_step == 0:
-           print('[%d/%d] - Running model on validation set....'
-                 %(i, total_val_step))
+#         # # Print log info
+#         if i % args.log_step == 0:
+#            print('[%d/%d] - Running model on validation set....'
+#                  %(i, total_val_step))
 
 
-    path, file = os.path.split(resFile)
+#     path, file = os.path.split(resFile)
 
-    export_filename = '{}/{}_{}'.format(path, total_iterations, file)
-    print("Exporting to... {}".format(export_filename))
-    with open(export_filename, 'w') as outfile:
-        json.dump(val_json, outfile)
+#     export_filename = '{}/{}_{}'.format(path, total_iterations, file)
+#     print("Exporting to... {}".format(export_filename))
+#     with open(export_filename, 'w') as outfile:
+#         json.dump(val_json, outfile)
 
-    print("calculating metrics...")
-    coco = COCO(annFile)
-    cocoRes = coco.loadRes(export_filename)
-    cocoEval = COCOEvalCap(coco, cocoRes)
-    cocoEval.params['image_id'] = cocoRes.getImgIds()
-    cocoEval.evaluate()
+#     print("calculating metrics...")
+#     coco = COCO(annFile)
+#     cocoRes = coco.loadRes(export_filename)
+#     cocoEval = COCOEvalCap(coco, cocoRes)
+#     cocoEval.params['image_id'] = cocoRes.getImgIds()
+#     cocoEval.evaluate()
 
-    for metric, score in cocoEval.eval.items():
-        log_value(metric, score, total_iterations)
-        print '%s: %.3f'%(metric, score)
+#     for metric, score in cocoEval.eval.items():
+#         log_value(metric, score, total_iterations)
+#         print '%s: %.3f'%(metric, score)
 
-    netG.train()
-    encoder.train()
-    for parameter in encoder.parameters():
-        parameter.requires_grad=True
-    for parameter in netG.parameters():
-        parameter.requires_grad=True
+#     netG.train()
+#     encoder.train()
+#     for parameter in encoder.parameters():
+#         parameter.requires_grad=True
+#     for parameter in netG.parameters():
+#         parameter.requires_grad=True
 
 
 
@@ -367,9 +370,9 @@ if __name__ == '__main__':
                         help='path for saving trained models')
     parser.add_argument('--crop_size', type=int, default=299 ,
                         help='size for randomly cropping images')
-    parser.add_argument('--vocab_path', type=str, default='data/vocab-py2.pkl',
+    parser.add_argument('--vocab_path', type=str, default='data/vocab-aesthetics.pkl',
                         help='path for vocabulary wrapper')
-    parser.add_argument('--dataset', type=str, default='coco' ,
+    parser.add_argument('--dataset', type=str, default='aesthetics' ,
                         help='dataset to use')
     parser.add_argument('--comments_path', type=str,
                         default='data/labels.h5',
@@ -388,7 +391,7 @@ if __name__ == '__main__':
                         help='dimension of gru hidden states')
     parser.add_argument('--num_layers', type=int , default=1 ,
                         help='number of layers in gru')
-    parser.add_argument('--pretrained', type=str)
+    parser.add_argument('--pretrained', type=str)#, default='logs/coco/mle_baseline/netG-6-32895.pkl')#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=16)

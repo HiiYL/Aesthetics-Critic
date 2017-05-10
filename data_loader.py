@@ -33,7 +33,7 @@ class DatasetFromFolder(data.Dataset):
         self.transform = transform
         self.comments = ava_table.comments.as_matrix()
 
-    def __getitem__(self, index):
+    def __getitem__(self, index, char_mode=False):
         # Load Image
         # input, shape = load_img(join(self.a_path, self.image_filenames[index]), returnShape=True)
 
@@ -52,8 +52,10 @@ class DatasetFromFolder(data.Dataset):
         # else:
         #comment = comments[0]
         #comment = comments[len(comments) - 1]
-            
-        tokens = nltk.tokenize.word_tokenize(str(comment).lower())
+        if char_mode:
+            tokens = list(comment.lower())
+        else:
+            tokens = nltk.tokenize.word_tokenize(str(comment).lower())
         caption = []
         caption.append(self.vocab('<start>'))
         caption.extend([self.vocab(token) for token in tokens])

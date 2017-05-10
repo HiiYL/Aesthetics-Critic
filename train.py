@@ -104,18 +104,9 @@ def train(save_path, args):
             features = encoder(images)
             use_teacher = True#(random.random() > 0.5)
             outputs  = decoder(features, captions, lengths, state, teacher_forced=use_teacher)
-
-            loss = 0
             # print(outputs.size(0))
             # print(outputs)
-            sum_weights = 0
-            for idx in range(outputs.size(0)):
-                loss += (0.9 ** idx) * criterion(outputs[idx].view(1,-1), targets[idx])
-                sum_weights += (0.9 ** idx)
-
-            loss /= sum_weights
-
-            # loss     = criterion(outputs, targets)
+            loss     = criterion(outputs, targets)
 
             loss.backward()
             #torch.nn.utils.clip_grad_norm(decoder.parameters(), args.clip)

@@ -9,10 +9,12 @@ from PIL import Image
 from build_vocab import Vocabulary
 from pycocotools.coco import COCO
 
+import random
+
 
 class CocoDataset(data.Dataset):
     """COCO Custom Dataset compatible with torch.utils.data.DataLoader."""
-    def __init__(self, mode, vocab, transform=None):
+    def __init__(self, mode, vocab, transform=None, mismatch_example=False):
         """Set the path for images, captions and vocabulary wrapper.
         
         Args:
@@ -26,6 +28,7 @@ class CocoDataset(data.Dataset):
         self.ids = list(self.coco.anns.keys())
         self.vocab = vocab
         self.transform = transform
+        self.mismatch_example = mismatch_example
 
     def __getitem__(self, index):
         """Returns one data pair (image and caption)."""
@@ -47,6 +50,19 @@ class CocoDataset(data.Dataset):
         caption.extend([vocab(token) for token in tokens])
         caption.append(vocab('<end>'))
         target = torch.Tensor(caption)
+
+        # if self.mismatch_example:
+        #     mismatch_id = random.choice(self.ids)
+        #     caption = coco.anns[mismatch_id]['caption']
+        #     tokens = nltk.tokenize.word_tokenize(str(caption).lower())
+        #     caption = []
+        #     caption.append(vocab('<start>'))
+        #     caption.extend([vocab(token) for token in tokens])
+        #     caption.append(vocab('<end>'))
+        #     mismatch = torch.Tensor(caption)
+
+
+
         return image, target, img_id
 
     def __len__(self):
