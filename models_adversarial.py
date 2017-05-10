@@ -105,6 +105,8 @@ class G(nn.Module):
         self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
         self.hidden_size = hidden_size
         self.gru_cell = nn.GRUCell(embed_size, hidden_size)
+        self.gru_cell_2 = nn.GRUCell(embed_size, hidden_size)
+        self.gru_cell_3 = nn.GRUCell(embed_size, hidden_size)
         self.linear_fc = nn.Linear(hidden_size * 2, hidden_size)
 
         self.attn = nn.Linear( hidden_size * 2, hidden_size)
@@ -137,10 +139,22 @@ class G(nn.Module):
         attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
         attn_applied = features * attn_weights
         inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
+        hx_1 = self.gru_cell(inputs, hx)
+        hx_1 = hx_1 + hx
 
-        hx = self.gru_cell(inputs, hx)
+        attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
+        attn_applied = features * attn_weights
+        inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
+        hx_2 = self.gru_cell_2(inputs, hx_1)
+        hx_2 = hx_2 + hx_1
 
-        return hx
+        attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
+        attn_applied = features * attn_weights
+        inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
+        hx_3 = self.gru_cell_3(inputs, hx_2)
+        hx_3 = hx_3 + hx_2
+
+        return hx_3
 
          
     def forward(self, features, captions, lengths, state, teacher_forced=True):
@@ -155,7 +169,9 @@ class G(nn.Module):
 
 
     def _forward_forced_cell(self, features, captions, lengths, states):
-        embeddings = self.embed(captions)
+        captions, batch_sizes = captions
+        embeddings = self.linear2(captions)
+        embeddings = pad_packed_sequence((embeddings,batch_sizes), batch_first=True)[0]
         embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
         hiddens_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
         hx = states[0].squeeze()
@@ -169,9 +185,10 @@ class G(nn.Module):
 
         hiddens_tensor_packed, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
         outputs = self.linear(hiddens_tensor_packed)
-        return outputs, hiddens_tensor, embeddings
+        return outputs, hiddens_tensor#, embeddings
 
     def _forward_free_cell(self, features, lengths, states):
+        beta = 3.0 # as per speaking same language paper
         output_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.vocab_size))
         hiddens_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
 
@@ -183,7 +200,7 @@ class G(nn.Module):
 
             hx = self.gru_attention(inputs, hx, features)
             outputs = self.linear(hx)
-            outputs = self.gumbel_sample(outputs, tau=0.5)
+            outputs = self.gumbel_sample(beta * outputs, tau=0.5)
             #predicted = outputs.max(1)[1]
             inputs = self.linear2(outputs).view(outputs.size(0), -1)
 
@@ -291,7 +308,7 @@ class G(nn.Module):
         return terminated_choices,terminated_confidences
 
 class D_Attention(nn.Module):
-    def __init__(self, embed_size, hidden_size, vocab, num_layers):
+    def __init__(self, embed_size, hidden_size, vocab, num_layers, use_log=False):
         """Set the hyper-parameters and build the layers."""
         super(D_Attention, self).__init__()
 
@@ -301,9 +318,9 @@ class D_Attention(nn.Module):
         self.vocab_size = len(vocab)
         self.fc2    = nn.Linear(self.vocab_size, embed_size)
 
-        self.linear = nn.Linear(hidden_size, hidden_size)
-        self.linear2 = nn.Linear(hidden_size, hidden_size)
-        self.linear3 = nn.Linear(hidden_size, 1)
+        self.linear = nn.Linear(hidden_size * 2, hidden_size * 2)
+        #self.linear2 = nn.Linear(hidden_size, hidden_size)
+        self.linear3 = nn.Linear(hidden_size * 2, 1)
 
         self.conv = nn.Conv2d(2048, 32, kernel_size=3, stride=1, padding=1)
         self.bn = nn.BatchNorm1d(hidden_size, momentum=0.01)
@@ -317,19 +334,26 @@ class D_Attention(nn.Module):
         self.log_softmax = nn.LogSoftmax()
         self.relu = nn.ReLU()
 
+        if use_log:
+            self.use_log = True
+            self.sigmoid = nn.Sigmoid()
+
         self.init_weights()
     
     def init_weights(self):
         """Initialize weights."""
         self.linear.weight.data.uniform_(-0.1, 0.1)
         self.linear.bias.data.fill_(0)
-        self.linear2.weight.data.uniform_(-0.1, 0.1)
-        self.linear2.bias.data.fill_(0)
+        #self.linear2.weight.data.uniform_(-0.1, 0.1)
+        #self.linear2.bias.data.fill_(0)
         self.linear3.weight.data.uniform_(-0.1, 0.1)
         self.linear3.bias.data.fill_(0)
 
         self.fc.weight.data.normal_(0.0, 0.02)
         self.fc.bias.data.fill_(0)
+
+        self.fc2.weight.data.normal_(0.0, 0.02)
+        self.fc2.bias.data.fill_(0)
 
         self.attn.weight.data.normal_(0.0, 0.02)
         self.attn.bias.data.fill_(0)
@@ -343,6 +367,7 @@ class D_Attention(nn.Module):
         attn_applied = features * attn_weights
         inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
         hx = self.gru_cell(inputs, hx)
+
         return hx
 
     def forward(self, features, captions, lengths, states, batch_sizes):
@@ -359,21 +384,21 @@ class D_Attention(nn.Module):
 
         embeddings = PackedSequence(data=embeddings, batch_sizes=batch_sizes)
         embeddings = pad_packed_sequence(embeddings, batch_first=True)[0]
-        embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
         hx = states[0].squeeze()
         for i in range(lengths[0]):
             inputs = embeddings[:,i,:]
-            if hx.data.size(0) > inputs.data.size(0):
-                hx = hx[:inputs.size(0)]
-                
             hx = self.gru_attention(inputs, hx, features)
             hiddens_tensor[ :, i, :] = hx
 
         x = torch.cat([ hiddens_tensor[ i, lengths[i] - 1 ].unsqueeze(0) for i in range( len(lengths) ) ], 0)
-        #x = self.relu(self.linear(x))
+        x = torch.cat((x,features),1)
+        x = self.relu(self.linear(x))
         #x = self.relu(self.linear2(x))
         x = self.linear3(x)
-        return x.mean(0).view(1)
+        if self.use_log:
+            return self.sigmoid(x)
+        else:
+            return x.mean(0).view(1)
 
 
 class D(nn.Module):

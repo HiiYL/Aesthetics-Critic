@@ -59,15 +59,15 @@ def run(save_path, args):
                              shuffle=True, num_workers=args.num_workers) 
 
     # Build the models
-    encoder = EncoderCNN(args.embed_size,torch.load('data/net_model_epoch_10.pth').inception)#models.inception_v3(pretrained=True), requires_grad=False)
+    encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True))
     netG = G(args.embed_size, args.hidden_size, vocab, args.num_layers)
-    netD = D_Attention(args.embed_size, args.hidden_size, vocab, args.num_layers, use_log=True)
+    netD = D_Attention(args.embed_size, args.hidden_size, vocab, args.num_layers)
     if args.pretrained:
         print("[!]loading pretrained model....")
         netG.load_state_dict(torch.load(args.pretrained))
         print("Done!")
 
-    label_real, label_fake = torch.FloatTensor(args.batch_size), torch.FloatTensor(args.batch_size)
+    label_real, label_fake = torch.LongTensor(args.batch_size), torch.LongTensor(args.batch_size)
 
     one = torch.FloatTensor([1])
     mone = one * -1
@@ -97,14 +97,13 @@ def run(save_path, args):
 
 
     label_real, label_fake = Variable(label_real), Variable(label_fake)
-    real_label = 1
-    fake_label = 0
 
-    #optimizerE = torch.optim.Adam(encoder.parameters(), lr= 0.1 * args.learning_rate)
-    optimizerG = torch.optim.Adam(netG.parameters(), lr=args.learning_rate)
-    optimizerD = torch.optim.Adam(netD.parameters(), lr=args.learning_rate)
+    # optimizerE = torch.optim.Adam(encoder.parameters(), lr= 0.1 *args.learning_rate)
+    # optimizerG = torch.optim.Adam(netG.parameters(), lr=args.learning_rate)
+    # optimizerD = torch.optim.Adam(netD.parameters(), lr=args.learning_rate)
 
-
+    optimizerD = torch.optim.RMSprop(netD.parameters(), lr = args.learning_rate) #args.learning_rate)
+    optimizerG = torch.optim.RMSprop(netG.parameters(), lr = args.learning_rate)#args.learning_rate)
 
 
 
@@ -115,7 +114,6 @@ def run(save_path, args):
     gen_iterations   = 0
 
     current_iter = 0
-    running_accuracy_average = 0
 
     for epoch in range(args.num_epochs):
 
@@ -131,6 +129,9 @@ def run(save_path, args):
 
             for p in netD.parameters():  # reset require_grad
                 p.requires_grad = True   # they are set to False below in netG update
+
+            for p in netD.parameters():
+               p.data.clamp_(args.clamp_lower, args.clamp_upper)
             
 
             targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
@@ -141,100 +142,101 @@ def run(save_path, args):
             y_onehot.resize_(targets.size(0),len(vocab))
             y_onehot.zero_()
             y_onehot.scatter_(1,targets.data.unsqueeze(1),1)
-            y_v = Variable(y_onehot)
 
             features = encoder(images).detach()
-
-
-            out, hidden   = netG(features, (y_v, batch_sizes), lengths, state, teacher_forced=True)
+            #out, hidden, embeddings   = netG(features, captions, lengths, state, teacher_forced=True)
             outputs_free, _ = netG(features, captions, lengths, state, teacher_forced=False)
 
             ## Discriminator Step
-            output_real     = netD(features.detach(), y_v, lengths, state, batch_sizes)
-            label_real.data.resize_(output_real.size()).fill_(real_label)
-            D_loss_real = criterion_bce(output_real, label_real)
+            D_loss_real     = netD(features, Variable(y_onehot)   , lengths, state, batch_sizes)
+            D_loss_real.backward(one)
+            D_loss_fake     = netD(features, outputs_free.detach(), lengths, state, batch_sizes)
+            D_loss_fake.backward(mone)
 
-            output_fake     = netD(features.detach(), outputs_free.detach(), lengths, state, batch_sizes)
-            label_fake.data.resize_(output_fake.size()).fill_(fake_label)
-            D_loss_fake = criterion_bce(output_fake, label_fake)
+            # real_data = Variable(y_onehot)
+            # alpha.resize_(real_data.size(0), 1).uniform_(0, 1)
 
-            # print(output_real.data)
-            # print((output_real.data >= 0.5).sum())
-            total = len(label_real)
-            #correct_real = (output_real.data >= 0.5).sum() / total
-            correct_fake = (output_fake.data < 0.5).sum() / total
-            D_accuracy = correct_fake
-
-            D_loss = 0.5 * (D_loss_real + D_loss_fake)
-            if not D_accuracy > 0.875:
-                D_loss.backward()
-                optimizerD.step()
             
-            ## Generator Step
-            for p in netD.parameters():
-                p.requires_grad = False # to avoid computation
-            netG.zero_grad()
-            netD.zero_grad()
-            output_fake = netD(features, outputs_free,lengths, state, batch_sizes)
-            G_loss = criterion_bce(output_fake, label_real)
-            mle_loss = criterion(out, targets)
-            if D_accuracy > 0.75:
-                G_loss.backward()
-            mle_loss.backward()
-            optimizerG.step()
+            ## TODO CONVERT BACK TO PER SENTENCE INSTEAD OF PER TOKEN
+            # alpha_ex = alpha.expand(real_data.size(0), real_data.size(1))
+            # interpolates = (alpha_ex * real_data.data) + (( 1 - alpha_ex ) * outputs_free.data)
 
-            running_accuracy_average += D_accuracy
-            # Print log info
-            if total_iterations % args.log_step == 0:
-                print('Epoch [%d/%d], Step [%d/%d], G_Loss: %.4f, D_Loss: %5.4f, D_Accuracy: %5.4f'
-                      %(epoch, args.num_epochs, i, total_step, 
-                        G_loss.data[0], D_loss.data[0], running_accuracy_average/args.log_step)) 
-                running_accuracy_average = 0
+            # interpolates = Variable(interpolates, requires_grad=True)
+            # D_interpolates = netD(interpolates,lengths,batch_sizes)
+            # gradients = grad(D_interpolates, interpolates,create_graph=True)[0]
+            # slopes = torch.sum(gradients ** 2, 1).sqrt()
+            # gradient_penalty = (torch.mean(slopes - 1.) ** 2)
 
-            if total_iterations % 100 == 0:
-                print("")
-                sampled_ids_free = torch.max(outputs_free,1)[1].squeeze()
-                sampled_ids_free = pad_packed_sequence([sampled_ids_free, batch_sizes], batch_first=True)[0]
-                sampled_ids_free = sampled_ids_free.cpu().data.numpy()
 
-                def word_idx_to_sentence(sample):
-                    sampled_caption = []
-                    for word_id in sample:
-                        word = vocab.idx2word[word_id]
-                        sampled_caption.append(word)
-                        if word == '<end>':
+            D_loss = D_loss_real - D_loss_fake # + 10 * gradient_penalty
+            #D_loss.backward()
+            optimizerD.step()
+
+            if gen_iterations < 25 or gen_iterations % 500 == 0:
+                Diters = 100
+            else:
+                Diters = args.Diters
+
+            current_iter += 1
+            total_iterations += 1
+            if current_iter >= Diters:
+                current_iter = 0
+                ## Generator Step
+                for p in netD.parameters():
+                    p.requires_grad = False # to avoid computation
+                netG.zero_grad()
+
+                G_loss = netD(features, outputs_free,lengths, state, batch_sizes)
+                G_loss.backward(one)
+                optimizerG.step()
+                gen_iterations += 1
+
+
+                # Print log info
+                #if total_iterations % args.log_step == 0:
+                print('Epoch [%d/%d][%d], Step [%d/%d], G_Loss: %.4f, D_Loss: %5.4f'
+                      %(epoch, args.num_epochs,gen_iterations, i, total_step, 
+                        G_loss.data[0], D_loss.data[0])) 
+
+                if total_iterations % 100 == 0:
+                    print("")
+                    sampled_ids_free = torch.max(outputs_free,1)[1].squeeze()
+                    sampled_ids_free = pad_packed_sequence([sampled_ids_free, batch_sizes], batch_first=True)[0]
+                    sampled_ids_free = sampled_ids_free.cpu().data.numpy()
+
+                    def word_idx_to_sentence(sample):
+                        sampled_caption = []
+                        for word_id in sample:
+                            word = vocab.idx2word[word_id]
+                            sampled_caption.append(word)
+                            if word == '<end>':
+                                break
+                        return ' '.join(sampled_caption)
+
+                    groundtruth_caption = captions.cpu().data.numpy()
+                    sampled_captions = ""
+                    for i, comment in enumerate(sampled_ids_free):
+                        if i > 1:
                             break
-                    return ' '.join(sampled_caption)
 
-                groundtruth_caption = captions.cpu().data.numpy()
-                sampled_captions = ""
-                for i, comment in enumerate(sampled_ids_free):
-                    if i > 1:
-                        break
+                        sampled_caption   = word_idx_to_sentence(groundtruth_caption[i])
+                        sampled_captions += "[G]{} \n".format(sampled_caption)
 
-                    sampled_caption   = word_idx_to_sentence(groundtruth_caption[i])
-                    sampled_captions += "[G]{} \n".format(sampled_caption)
+                        sampled_caption =  word_idx_to_sentence(comment)
+                        sampled_captions += "[F]{} \n".format(sampled_caption)
 
-                    sampled_caption =  word_idx_to_sentence(comment)
-                    sampled_captions += "[F]{} \n".format(sampled_caption)
-
-                print(sampled_captions)
-
-
+                    print(sampled_captions)
 
             # Save the model
-            if (total_iterations + 1) % args.save_step == 0:
+            if (gen_iterations + 1) % args.save_step == 0:
                 torch.save(netG.state_dict(), 
                            os.path.join(save_path, 
                                         'netG-%d.pkl' %(gen_iterations)))
 
 
-            if (total_iterations + 1) % args.tb_log_step == 0:
+            if (gen_iterations + 1) % args.tb_log_step == 0:
                 log_value('D_Loss', D_loss.data[0], gen_iterations)
                 log_value('G_Loss', G_loss.data[0], gen_iterations)
-
-
-            total_iterations += 1
 
             # if (total_iterations) % 30000 == 0:
             #     validate(encoder, netG, val_data_loader, val_state, criterion, vocab, total_iterations)
@@ -390,7 +392,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--num_workers', type=int, default=2)
-    parser.add_argument('--learning_rate', type=float, default=1e-3)
+    parser.add_argument('--learning_rate', type=float, default=5e-5)
     parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')
     parser.add_argument('--clamp_lower', type=float, default=-0.01)
     parser.add_argument('--clamp_upper', type=float, default=0.01)
