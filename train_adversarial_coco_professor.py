@@ -15,7 +15,7 @@ import numpy as np
 import os
 from data_loader_coco import get_loader 
 from build_vocab import Vocabulary
-from models_adversarial import EncoderCNN, G, D, D_Attention, InceptionNet
+from models_adversarial_professor import EncoderCNN, G, D, InceptionNet
 import pickle
 import datetime
 
@@ -63,7 +63,7 @@ def run(save_path, args):
     # Build the models
     encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True))
     netG = G(args.embed_size, args.hidden_size, vocab, args.num_layers)
-    netD = D_Attention(args.embed_size, args.hidden_size, vocab, args.num_layers)
+    netD = D(args.embed_size, args.hidden_size, vocab, args.num_layers)
     if args.pretrained:
         print("[!]loading pretrained model....")
         netG.load_state_dict(torch.load(args.pretrained))
@@ -138,17 +138,13 @@ def run(save_path, args):
             netG.zero_grad()
             netD.zero_grad()
 
-            # y_onehot.resize_(targets.size(0),len(vocab))
-            # y_onehot.zero_()
-            # y_onehot.scatter_(1,targets.data.unsqueeze(1),1)
-
             features = encoder(images).detach()
-            #out, hidden, embeddings   = netG(features, captions, lengths, state, teacher_forced=True)
-            outputs_free, _ = netG(features, captions, lengths, state, teacher_forced=False)
+            out     , hidden        = netG(features, captions, lengths, state, teacher_forced=True)
+            out_free, hidden_free   = netG(features, captions, lengths, state, teacher_forced=False)
 
             ## Discriminator Step
-            D_loss_real     = netD(features, targets              , lengths, state, batch_sizes)
-            D_loss_fake     = netD(features, outputs_free.detach(), lengths, state, batch_sizes)
+            D_loss_real     = netD(hidden.detach()     , lengths, batch_sizes)
+            D_loss_fake     = netD(hidden_free.detach(), lengths, batch_sizes)
 
             # real_data = Variable(y_onehot)
             # alpha.resize_(real_data.size(0), 1).uniform_(0, 1)
@@ -182,9 +178,11 @@ def run(save_path, args):
                 for p in netD.parameters():
                     p.requires_grad = False # to avoid computation
                 netG.zero_grad()
-
-                D_loss_fake = netD(features, outputs_free,lengths, state, batch_sizes)
-                G_loss = -D_loss_fake
+                #out = pack_padded_sequence(out, lengths, batch_first=True)
+                G_loss_mle      = criterion(out, targets)
+                G_loss_professor = -netD(hidden_free, lengths, batch_sizes)
+                
+                G_loss = G_loss_mle + G_loss_professor
                 G_loss.backward()
                 optimizerG.step()
                 gen_iterations += 1
@@ -192,13 +190,13 @@ def run(save_path, args):
 
                 # Print log info
                 #if total_iterations % args.log_step == 0:
-                print('Epoch [%d/%d], Step [%d/%d], G_Loss: %.4f, D_Loss: %5.4f'
+                print('Epoch [%d/%d], Step [%d/%d], G_Loss: %.4f, D_Loss: %5.4f, G_Loss_MLE: %.4f, G_Loss_Prof: %.4f'
                       %(epoch, args.num_epochs, i, total_step, 
-                        G_loss.data[0], D_loss.data[0])) 
+                        G_loss.data[0], D_loss.data[0], G_loss_mle.data[0], G_loss_professor.data[0])) 
 
                 if total_iterations % 100 == 0:
                     print("")
-                    sampled_ids_free = torch.max(outputs_free,1)[1].squeeze()
+                    sampled_ids_free = torch.max(out_free,1)[1].squeeze()
                     sampled_ids_free = pad_packed_sequence([sampled_ids_free, batch_sizes], batch_first=True)[0]
                     sampled_ids_free = sampled_ids_free.cpu().data.numpy()
 
@@ -212,10 +210,10 @@ def run(save_path, args):
                         return ' '.join(sampled_caption)
 
                     groundtruth_caption = captions.cpu().data.numpy()
+                    sampled_captions = ""
                     for i, comment in enumerate(sampled_ids_free):
                         if i > 1:
                             break
-                        sampled_captions = ""
 
                         sampled_caption   = word_idx_to_sentence(groundtruth_caption[i])
                         sampled_captions += "[G]{} \n".format(sampled_caption)
@@ -385,7 +383,7 @@ if __name__ == '__main__':
                         help='dimension of gru hidden states')
     parser.add_argument('--num_layers', type=int , default=1 ,
                         help='number of layers in gru')
-    parser.add_argument('--pretrained', type=str)#, default='logs/coco/03052017180131/decoder-1-20000.pkl')#, default='-2-20000.pkl')
+    parser.add_argument('--pretrained', type=str, default='logs/coco/mle_baseline/netG-6-32895.pkl')#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=16)
