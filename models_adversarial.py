@@ -97,19 +97,15 @@ class G(nn.Module):
 
         self.vocab = vocab
         self.vocab_size = len(vocab)
+        self.hidden_size = hidden_size
+
         self.linear = nn.Linear(hidden_size, self.vocab_size)
         self.linear2 = nn.Linear(self.vocab_size, embed_size)
-        self.embed  = nn.Embedding(self.vocab_size, embed_size)
 
         self.conv = nn.Conv2d(2048, 32, kernel_size=3, stride=1, padding=1)
         self.fc = nn.Linear(2048, embed_size)
         self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
-        self.hidden_size = hidden_size
         
-        
-        
-        self.linear_fc = nn.Linear(hidden_size * 2, hidden_size)
-
         self.gru_cell = nn.GRUCell(embed_size, hidden_size)
         self.attn = nn.Linear( hidden_size * 2, hidden_size)
         self.attn_combine = nn.Linear( hidden_size * 2, hidden_size)
@@ -122,10 +118,13 @@ class G(nn.Module):
         self.attn_3 = nn.Linear( hidden_size * 2, hidden_size)
         self.attn_combine_3 = nn.Linear( hidden_size * 2, hidden_size)
 
+        self.final_combine = nn.Linear( hidden_size * 3, hidden_size)
 
         self.log_softmax = nn.LogSoftmax()
         self.softmax = nn.Softmax()
         self.relu = nn.ReLU()
+
+
 
         self.init_weights()
     
@@ -155,7 +154,8 @@ class G(nn.Module):
         self.attn_combine_3.weight.data.normal_(0.0, 0.02)
         self.attn_combine_3.bias.data.fill_(0)
 
-
+        self.final_combine.weight.data.normal_(0.0, 0.02)
+        self.final_combine.bias.data.fill_(0)
 
 
     def gru_attention(self, inputs, hx, features):
@@ -175,9 +175,9 @@ class G(nn.Module):
         attn_applied = features * attn_weights
         inputs = self.relu(self.attn_combine_3(torch.cat((inputs, attn_applied ), 1)))
         hx_3 = self.gru_cell_3(inputs, hx_2)
-        hx_3 = hx_3 + hx_1
 
-        return hx_3
+        out = self.final_combine(torch.cat((torch.cat((hx_1,hx_2),1), hx_3),1))
+        return out
 
          
     def forward(self, features, captions, lengths, state, teacher_forced=True):
@@ -198,7 +198,7 @@ class G(nn.Module):
             embeddings = pad_packed_sequence((embeddings,batch_sizes), batch_first=True)[0]
         else:
             batch_size, caption_length, _ = captions.size()
-            captions = captions.view(-1,43892)
+            captions = captions.view(-1,self.vocab_size)
             embeddings = self.linear2(captions)
             embeddings = embeddings.view(batch_size, caption_length, -1)
 
@@ -214,11 +214,9 @@ class G(nn.Module):
 
         hiddens_tensor_packed, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
         outputs = self.linear(hiddens_tensor_packed)
-        #outputs = self.softmax(outputs)
         return outputs#, hiddens_tensor
 
     def _forward_free_cell(self, features, lengths, states):
-        beta = 3.0 # as per "speaking same language" paper
         output_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.vocab_size))
         hiddens_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
 
@@ -227,7 +225,7 @@ class G(nn.Module):
         for i in range(lengths[0]):
             hx = self.gru_attention(inputs, hx, features)
             outputs = self.linear(hx)
-            outputs = self.gumbel_sample(beta * outputs, tau=0.5)
+            outputs = self.gumbel_sample(outputs, tau=0.5)
             inputs = self.linear2(outputs).view(outputs.size(0), -1)
 
             hiddens_tensor[:,i,:] = hx
@@ -251,10 +249,10 @@ class G(nn.Module):
         features = features.view(features.size(0), -1)
         features = self.bn(self.fc(features))
 
-        inputs = features
+        inputs = Variable(features.data, volatile=True)
 
         states = states[0].squeeze(0)
-        states = self.gru_attention(inputs, states, features)   # (batch_size, 1, hidden_size)
+        states = self.gru_attention(inputs, states, features)            # (batch_size, 1, hidden_size)
         outputs = self.log_softmax(self.linear(states.squeeze(1)))           # (batch_size, vocab_size)
         confidences, best_choices = outputs.topk(n)
 
@@ -273,14 +271,16 @@ class G(nn.Module):
             best_confidence = [None] * n * (n - len(terminated_choices))
             best_states = [None] * n * (n - len(terminated_choices))
 
-            # node_list = [None] * n * (n - len(terminated_choices))
-
-            # for each choice
             for choice_index, choice in enumerate(best_choices):
 
                 input_choice = choice[word_index] if word_index != 0 else choice
-                   
-                inputs = self.embed(input_choice)
+
+                onehot = torch.cuda.FloatTensor(1, self.vocab_size).fill_(0)
+                onehot[0][input_choice.data] = 1
+                onehot = Variable(onehot, volatile=True)
+
+                inputs = self.linear2(onehot)
+
                 current_confidence = confidences[:,choice_index]
 
                 out_states = self.gru_attention(inputs, cached_states[choice_index], features) # (batch_size, 1, hidden_size)
@@ -297,8 +297,6 @@ class G(nn.Module):
                     position = choice_index * n + rank
 
                     confidence = current_confidence + inner_confidences[rank] - (diverse_gamma * (rank + 1))
-
-                    #node_list[position] = Node(choice_list=item, confidence=confidence, states=out_states)
 
                     best_list[position]   = item
                     best_states[position] = out_states
@@ -331,6 +329,7 @@ class G(nn.Module):
         if len(best_choices_index) > 0:
             terminated_choices.extend([ best_list[index] for index in best_choices_index ])
             terminated_confidences.extend([ best_confidence_tensor[index].data.cpu().numpy()[0] for index in best_choices_index ])
+            
         return terminated_choices,terminated_confidences
 
 class D_Attention(nn.Module):

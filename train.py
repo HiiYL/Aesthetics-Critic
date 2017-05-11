@@ -69,11 +69,6 @@ def train(save_path, args):
         y_onehot = y_onehot.cuda()
         criterion = criterion.cuda()
 
-
-
-    #fc_params = list(map(id, encoder.inception.fc.parameters()))
-    #base_params = filter(lambda p: id(p) not in ignored_params,
-    #                 encoder..parameters())
     params = [
                 {'params': decoder.parameters()},
                 {'params': encoder.parameters(), 'lr': 0.1 * args.learning_rate}
@@ -118,7 +113,6 @@ def train(save_path, args):
             loss     = criterion(outputs, targets)
 
             loss.backward()
-            #torch.nn.utils.clip_grad_norm(decoder.parameters(), args.clip)
             optimizer.step()
 
             # Print log info

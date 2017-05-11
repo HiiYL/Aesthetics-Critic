@@ -42,10 +42,15 @@ def run(save_path, args):
         os.makedirs(args.model_path)
     
     # Image preprocessing
-    transform = transforms.Compose([
-        transforms.Scale(299),
-        transforms.RandomCrop(299),
+    train_transform = transforms.Compose([
+        transforms.Scale((299,299)),
         transforms.RandomHorizontalFlip(), 
+        transforms.ToTensor(), 
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+
+
+    test_transform = transforms.Compose([
+        transforms.Scale((299,299)),
         transforms.ToTensor(), 
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     
@@ -54,32 +59,32 @@ def run(save_path, args):
         vocab = pickle.load(f)
     
     train_data_loader = get_loader("train", vocab, 
-                             transform, args.batch_size,
+                             train_transform, args.batch_size,
                              shuffle=True, num_workers=args.num_workers)
     val_data_loader = get_loader("val", vocab, 
-                             transform, 1,
+                             test_transform, 1,
                              shuffle=False, num_workers=args.num_workers)
 
     # Build the models
-    encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True))
+    encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True), requires_grad=True)
     netG = G(args.embed_size, args.hidden_size, vocab, args.num_layers)
-    #netD = D(args.embed_size, args.hidden_size, vocab, args.num_layers)
-    if args.pretrained:
+
+    if args.netG:
         print("[!]loading pretrained model....")
-        netG.load_state_dict(torch.load(args.pretrained))
+        netG.load_state_dict(torch.load(args.netG))
         print("Done!")
 
-    label_real, label_fake = torch.LongTensor(args.batch_size), torch.LongTensor(args.batch_size)
-    real_label = 1
-    fake_label = 0
+    if args.encoder:
+        encoder.load_state_dict(torch.load(args.encoder))
 
     criterion = nn.CrossEntropyLoss()
-    criterion_bce = nn.BCELoss()
     
     state = (Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)),
      Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)))
     val_state = (Variable(torch.zeros(args.num_layers, 1, args.hidden_size)),
      Variable(torch.zeros(args.num_layers, 1, args.hidden_size)))
+
+    y_onehot = torch.FloatTensor(args.batch_size, 20,len(vocab))
 
     if torch.cuda.is_available():
         encoder = encoder.cuda()
@@ -87,19 +92,17 @@ def run(save_path, args):
         #netD.cuda()
         state = [s.cuda() for s in state]
         val_state = [s.cuda() for s in val_state]
-        label_real, label_fake = label_real.cuda(), label_fake.cuda()
-        criterion_bce = criterion_bce.cuda()
         criterion = criterion.cuda()
+        y_onehot = y_onehot.cuda()
 
-    label_real, label_fake = Variable(label_real), Variable(label_fake)
-
-    # optimizerE = torch.optim.Adam(encoder.parameters(), lr= 0.1 *args.learning_rate)
-    optimizerG = torch.optim.Adam(netG.parameters(), lr=args.learning_rate)
-    #optimizerD = torch.optim.Adam(netD.parameters(), lr=args.learning_rate)
+    params = [
+                {'params': netG.parameters()},
+                {'params': encoder.parameters(), 'lr': 0.1 * args.learning_rate}
+            ]
+    optimizer = torch.optim.Adam(params, lr=args.learning_rate)
 
     # Train the Models
     total_step = len(train_data_loader)
-
     total_iterations = 0
 
     for epoch in range(args.num_epochs):
@@ -108,7 +111,6 @@ def run(save_path, args):
         #     for param_group in optimizer.param_groups:
         #         param_group['lr'] = lr
         for i, (images, captions, lengths, img_id) in enumerate(train_data_loader):
-            
             # Set mini-batch dataset
             images = Variable(images)
             captions = Variable(captions)
@@ -118,88 +120,71 @@ def run(save_path, args):
 
             targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
 
-            netG.zero_grad()
-            #netD.zero_grad()
 
+            y_onehot.resize_(captions.size(0),captions.size(1),len(vocab))
+            y_onehot.zero_()
+            y_onehot.scatter_(2,captions.data.unsqueeze(2),1)
+            y_v = Variable(y_onehot)
+
+            netG.zero_grad()
             features = encoder(images).detach()
-            out, hidden, embeddings   = netG(features, captions, lengths, state, teacher_forced=True)
-            # outputs_free, hidden_free = netG(features, captions, lengths, state, teacher_forced=False)
-
-            # ## Discriminator Step
-            # output_real      = netD(targets,lengths,batch_sizes, label=True)
-            # label_real.data.resize_(output_real.size(0)).fill_(real_label)
-
-            # D_loss_real      = criterion(output_real, label_real)
-            
-            # output_fake      = netD(outputs_free.detach(),lengths,batch_sizes, label=False)
-            # label_fake.data.resize_(output_fake.size(0)).fill_(fake_label)
-            # D_loss_fake      = criterion(output_fake, label_fake)
-
-            # correct_real = torch.mean((torch.max(output_real,1)[1].data == label_real.data).float())
-            # correct_fake = torch.mean((torch.max(output_fake,1)[1].data == label_fake.data).float())
-            # D_accuracy = 0.5 * ( correct_real + correct_fake )
-            # D_loss = 0.5 * ( D_loss_real + D_loss_fake )
-
-            # if not D_accuracy > 0.99:
-            #     D_loss.backward()
-            #     optimizerD.step()
-
-            ## Generator Step
-            netG.zero_grad()
-
-            #output_free = netD(outputs_free,lengths,batch_sizes, label=False)
-            #gan_loss = criterion(output_free, label_real)
+            out = netG(features, y_v, lengths, state, teacher_forced=True)
 
             mle_loss = criterion(out, targets)
             mle_loss.backward()
-            optimizerG.step()
+            optimizer.step()
 
             # Print log info
             if total_iterations % args.log_step == 0:
                 print('Epoch [%d/%d], Step [%d/%d] Loss: %5.4f, Perplexity: %5.4f'
                       %(epoch, args.num_epochs, i, total_step,  mle_loss.data[0], np.exp(mle_loss.data[0]))) 
 
-            # if total_iterations % 100 == 0:
-            #     print("")
-            #     sampled_ids_forced = torch.max(out,1)[1].squeeze()
-            #     sampled_ids_forced = pad_packed_sequence([sampled_ids_forced, batch_sizes], batch_first=True)[0]
-            #     sampled_ids_forced = sampled_ids_forced.cpu().data.numpy()
+            if total_iterations % 100 == 0:
+                print("")
+                outputs_free,_  = netG(Variable(features.data, volatile=True), y_v, lengths, state, teacher_forced=False)
 
-            #     def word_idx_to_sentence(sample):
-            #         sampled_caption = []
-            #         for word_id in sample:
-            #             word = vocab.idx2word[word_id]
-            #             sampled_caption.append(word)
-            #             if word == '<end>':
-            #                 break
-            #         return ' '.join(sampled_caption)
+                sampled_ids_free = torch.max(outputs_free,1)[1].squeeze()
+                sampled_ids_free = pad_packed_sequence([sampled_ids_free, batch_sizes], batch_first=True)[0]
+                sampled_ids_free = sampled_ids_free.cpu().data.numpy()
 
-            #     groundtruth_caption = captions.cpu().data.numpy()
-            #     for i in range(len(sampled_ids_forced)):
-            #         if i > 1:
-            #             break
+                def word_idx_to_sentence(sample):
+                    sampled_caption = []
+                    for word_id in sample:
+                        word = vocab.idx2word[word_id]
+                        sampled_caption.append(word)
+                        if word == '<end>':
+                            break
+                    return ' '.join(sampled_caption)
 
-            #         sampled_captions = ""
+                groundtruth_caption = captions.cpu().data.numpy()
+                sampled_captions = ""
+                for i, comment in enumerate(sampled_ids_free):
+                    if i > 1:
+                        break
 
-            #         sampled_caption   = word_idx_to_sentence(groundtruth_caption[i])
-            #         sampled_captions += "[G]{} \n".format(sampled_caption)
+                    sampled_caption   = word_idx_to_sentence(groundtruth_caption[i])
+                    sampled_captions += "[G]{} \n".format(sampled_caption)
 
-            #         sampled_caption =  word_idx_to_sentence(sampled_ids_forced[i])
-            #         sampled_captions += "[T]{} \n".format(sampled_caption)
+                    sampled_caption =  word_idx_to_sentence(comment)
+                    sampled_captions += "[F]{} \n".format(sampled_caption)
 
-            #         print(sampled_captions)
+                print(sampled_captions)
+
             # Save the model
             if (total_iterations+1) % args.save_step == 0:
                 torch.save(netG.state_dict(), 
                            os.path.join(save_path, 
                                         'netG-%d-%d.pkl' %(epoch+1, i+1)))
+                torch.save(encoder.state_dict(), 
+                           os.path.join(save_path, 
+                                        'encoder-%d-%d.pkl' %(epoch+1, i+1)))
 
 
             if total_iterations % args.tb_log_step == 0:
                 log_value('Loss', mle_loss.data[0], total_iterations)
                 log_value('Perplexity', np.exp(mle_loss.data[0]), total_iterations)
 
-            if (total_iterations+1) % 10000 == 0:
+            if (total_iterations+1) % args.save_step == 0:
                 validate(encoder, netG, val_data_loader, val_state, criterion, vocab, total_iterations)
 
             total_iterations += 1
@@ -243,15 +228,14 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
 
         # Forward, Backward and Optimize
         features = encoder(images)
+        features = Variable(features.data, volatile=True)
 
-        sampled_ids_list, terminated_confidences = netG.beamSearch(features, state, n=10, diverse_gamma=0.5)
+        sampled_ids_list, terminated_confidences = netG.beamSearch(features, state, n=3, diverse_gamma=0.0)
         sampled_ids_list = np.array([ sampled_ids.cpu().data.numpy() for sampled_ids in sampled_ids_list ])
-        
-        # Decode word_ids to words
-        sorted_idx = np.argsort(terminated_confidences)
-        sampled_ids_sorted = sorted(zip(terminated_confidences,sampled_ids_list), reverse=True)
 
-        _, sampled_ids = sampled_ids_sorted[0]
+        max_index = np.argmin(terminated_confidences) ## Should this be min?
+        #print(max_index)
+        sampled_ids = sampled_ids_list[max_index]
 
         sampled_caption = []
         for word_id in sampled_ids:
@@ -342,12 +326,14 @@ if __name__ == '__main__':
                         help='dimension of gru hidden states')
     parser.add_argument('--num_layers', type=int , default=1 ,
                         help='number of layers in gru')
-    parser.add_argument('--pretrained', type=str, default='logs/coco/03052017180131/decoder-1-20000.pkl')#, default='-2-20000.pkl')
+    parser.add_argument('--netG', type=str)#, default='-2-20000.pkl')
+    parser.add_argument('--encoder', type=str)
+
     
     parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--num_workers', type=int, default=2)
-    parser.add_argument('--learning_rate', type=float, default=0.0001)
+    parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')
     args = parser.parse_args()
     print(args)
