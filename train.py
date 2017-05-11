@@ -44,8 +44,8 @@ def train(save_path, args):
                              shuffle=True, num_workers=args.num_workers) 
 
     # Build the models
-    encoder = EncoderCNN(args.embed_size, models.inception_v3(pretrained=True))
-    encoder.set_finetune(finetune=True)
+    encoder = EncoderCNN(args.embed_size,
+     torch.load('data/net_model_epoch_10.pth').inception, requires_grad=True)#models.inception_v3(pretrained=True))
 
     decoder = G(args.embed_size, args.hidden_size, 
                              vocab, args.num_layers)
@@ -57,13 +57,19 @@ def train(save_path, args):
     state = (Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)),
      Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)))
 
+    y_onehot = torch.FloatTensor(args.batch_size, 20,len(vocab))
+
+    # Loss and Optimizer
+    criterion = nn.CrossEntropyLoss()
+
     if torch.cuda.is_available():
         encoder.cuda()
         decoder.cuda()
         state = [s.cuda() for s in state]
+        y_onehot = y_onehot.cuda()
+        criterion = criterion.cuda()
 
-    # Loss and Optimizer
-    criterion = nn.CrossEntropyLoss()
+
 
     #fc_params = list(map(id, encoder.inception.fc.parameters()))
     #base_params = filter(lambda p: id(p) not in ignored_params,
@@ -98,14 +104,17 @@ def train(save_path, args):
                 captions = captions.cuda()
             targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
 
+            y_onehot.resize_(captions.size(0),captions.size(1),len(vocab))
+            y_onehot.zero_()
+            y_onehot.scatter_(2,captions.data.unsqueeze(2),1)
+            y_v = Variable(y_onehot)
+
             # Forward, Backward and Optimize
             decoder.zero_grad()
             encoder.zero_grad()
             features = encoder(images)
-            use_teacher = True#(random.random() > 0.5)
-            outputs  = decoder(features, captions, lengths, state, teacher_forced=use_teacher)
-            # print(outputs.size(0))
-            # print(outputs)
+            use_teacher = True
+            outputs  = decoder(features, y_v, lengths, state, teacher_forced=use_teacher)
             loss     = criterion(outputs, targets)
 
             loss.backward()
@@ -116,43 +125,38 @@ def train(save_path, args):
             if total_iterations % args.log_step == 0:
                 print('Epoch [%d/%d], Step [%d/%d], Loss: %.4f, Perplexity: %5.4f'
                       %(epoch, args.num_epochs, i, total_step, 
-                        loss.data[0], np.exp(loss.data[0]))) 
+                        loss.data[0], torch.exp(loss).data[0])) 
 
             if total_iterations % 100 == 0:
-                print()
-                decoder.eval()
-                for parameter in decoder.parameters():
-                    parameter.requires_grad=False
-                outputs  = decoder(features, captions, lengths, state, teacher_forced=False)
-                for parameter in decoder.parameters():
-                    parameter.requires_grad=True
-                decoder.train()
-                sampled_ids = torch.max(outputs,1)[1].squeeze()
-                sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
-                sampled_ids = sampled_ids.cpu().data.numpy()
+                print("")
+                outputs_free,_  = decoder(Variable(features.data, volatile=True), y_v, lengths, state, teacher_forced=False)
 
-                for i, comment in enumerate(sampled_ids):
+                sampled_ids_free = torch.max(outputs_free,1)[1].squeeze()
+                sampled_ids_free = pad_packed_sequence([sampled_ids_free, batch_sizes], batch_first=True)[0]
+                sampled_ids_free = sampled_ids_free.cpu().data.numpy()
+
+                def word_idx_to_sentence(sample):
+                    sampled_caption = []
+                    for word_id in sample:
+                        word = vocab.idx2word[word_id]
+                        sampled_caption.append(word)
+                        if word == '<end>':
+                            break
+                    return ' '.join(sampled_caption)
+
+                groundtruth_caption = captions.cpu().data.numpy()
+                sampled_captions = ""
+                for i, comment in enumerate(sampled_ids_free):
                     if i > 1:
                         break
-                    sampled_caption = []
-                    for word_id in comment:
-                        word = vocab.idx2word[word_id]
-                        sampled_caption.append(word)
-                        if word == '<end>':
-                            break
-                    sentence = "[P]" + ' '.join(sampled_caption)
-                    print(sentence)
 
-                    sampled_caption = []
-                    sample = captions.cpu().data.numpy()
-                    for word_id in sample[i]:
-                        word = vocab.idx2word[word_id]
-                        sampled_caption.append(word)
-                        if word == '<end>':
-                            break
-                    sentence = "[S]" + ' '.join(sampled_caption)
-                    print(sentence)
-                    print()
+                    sampled_caption   = word_idx_to_sentence(groundtruth_caption[i])
+                    sampled_captions += "[G]{} \n".format(sampled_caption)
+
+                    sampled_caption =  word_idx_to_sentence(comment)
+                    sampled_captions += "[F]{} \n".format(sampled_caption)
+
+                print(sampled_captions)
 
             # Save the model
             if (total_iterations+1) % args.save_step == 0:
@@ -207,7 +211,7 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained', type=str)#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
-    parser.add_argument('--batch_size', type=int, default=2)
+    parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')

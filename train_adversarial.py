@@ -62,9 +62,14 @@ def run(save_path, args):
     encoder = EncoderCNN(args.embed_size,torch.load('data/net_model_epoch_10.pth').inception)#models.inception_v3(pretrained=True), requires_grad=False)
     netG = G(args.embed_size, args.hidden_size, vocab, args.num_layers)
     netD = D_Attention(args.embed_size, args.hidden_size, vocab, args.num_layers, use_log=True)
-    if args.pretrained:
-        print("[!]loading pretrained model....")
-        netG.load_state_dict(torch.load(args.pretrained))
+    if args.netG:
+        print("[!]loading pretrained model for generator....")
+        netG.load_state_dict(torch.load(args.netG))
+        print("Done!")
+
+    if args.netE:
+        print("[!]loading pretrained model for encoder....")
+        encoder.load_state_dict(torch.load(args.netE))
         print("Done!")
 
     label_real, label_fake = torch.FloatTensor(args.batch_size), torch.FloatTensor(args.batch_size)
@@ -74,6 +79,7 @@ def run(save_path, args):
 
     criterion = nn.CrossEntropyLoss()
     criterion_bce = nn.BCELoss()
+    criterion_mse = nn.MSELoss()
     
     state = (Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)),
      Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)))
@@ -91,6 +97,7 @@ def run(save_path, args):
         label_real, label_fake = label_real.cuda(), label_fake.cuda()
         criterion_bce = criterion_bce.cuda()
         criterion = criterion.cuda()
+        criterion_mse = criterion_mse.cuda()
         one, mone = one.cuda(), mone.cuda()
         alpha = alpha.cuda()
         y_onehot = y_onehot.cuda()
@@ -104,30 +111,20 @@ def run(save_path, args):
     optimizerG = torch.optim.Adam(netG.parameters(), lr=args.learning_rate)
     optimizerD = torch.optim.Adam(netD.parameters(), lr=args.learning_rate)
 
-
-
-
-
     # Train the Models
     total_step = len(train_data_loader)
-
     total_iterations = 0
     gen_iterations   = 0
-
     current_iter = 0
     running_accuracy_average = 0
-
     for epoch in range(args.num_epochs):
-
         for i, (images, captions, lengths) in enumerate(train_data_loader):
-
             # Set mini-batch dataset
             images = Variable(images)
             captions = Variable(captions)
             if torch.cuda.is_available():
                 images = images.cuda()
                 captions = captions.cuda()
-
 
             for p in netD.parameters():  # reset require_grad
                 p.requires_grad = True   # they are set to False below in netG update
@@ -144,48 +141,44 @@ def run(save_path, args):
             y_v = Variable(y_onehot)
 
             features = encoder(images).detach()
-
-
-            out, hidden   = netG(features, (y_v, batch_sizes), lengths, state, teacher_forced=True)
             outputs_free, _ = netG(features, captions, lengths, state, teacher_forced=False)
 
             ## Discriminator Step
-            output_real     = netD(features.detach(), y_v, lengths, state, batch_sizes)
+            output_real, D_hidden_real = netD(features.detach(), y_v, lengths, state, batch_sizes)
             label_real.data.resize_(output_real.size()).fill_(real_label)
             D_loss_real = criterion_bce(output_real, label_real)
 
-            output_fake     = netD(features.detach(), outputs_free.detach(), lengths, state, batch_sizes)
+            output_fake, _  = netD(features.detach(), outputs_free.detach(), lengths, state, batch_sizes)
             label_fake.data.resize_(output_fake.size()).fill_(fake_label)
             D_loss_fake = criterion_bce(output_fake, label_fake)
 
-            # print(output_real.data)
-            # print((output_real.data >= 0.5).sum())
             total = len(label_real)
-            #correct_real = (output_real.data >= 0.5).sum() / total
             correct_fake = (output_fake.data < 0.5).sum() / total
             D_accuracy = correct_fake
 
-            D_loss = 0.5 * (D_loss_real + D_loss_fake)
-            if not D_accuracy > 0.875:
-                D_loss.backward()
-                optimizerD.step()
+            D_loss = D_loss_real + D_loss_fake
+            D_loss.backward()
+            optimizerD.step()
             
-            ## Generator Step
-            for p in netD.parameters():
-                p.requires_grad = False # to avoid computation
-            netG.zero_grad()
-            netD.zero_grad()
-            output_fake = netD(features, outputs_free,lengths, state, batch_sizes)
-            G_loss = criterion_bce(output_fake, label_real)
-            mle_loss = criterion(out, targets)
-            if D_accuracy > 0.75:
+            current_iter += 1
+            total_iterations += 1
+            if current_iter > args.Diters:
+                current_iter = 0
+                gen_iterations += 1
+                ## Generator Step
+                for p in netD.parameters():
+                    p.requires_grad = False # to avoid computation
+                netG.zero_grad()
+                netD.zero_grad()
+                output_fake, D_hidden_fake = netD(features, outputs_free,lengths, state, batch_sizes)
+                G_loss = criterion_bce(output_fake, label_real)
                 G_loss.backward()
-            mle_loss.backward()
-            optimizerG.step()
+                #mle_loss.backward()
+                optimizerG.step()
 
-            running_accuracy_average += D_accuracy
-            # Print log info
-            if total_iterations % args.log_step == 0:
+                running_accuracy_average += D_accuracy
+                # Print log info
+                #if total_iterations % args.log_step == 0:
                 print('Epoch [%d/%d], Step [%d/%d], G_Loss: %.4f, D_Loss: %5.4f, D_Accuracy: %5.4f'
                       %(epoch, args.num_epochs, i, total_step, 
                         G_loss.data[0], D_loss.data[0], running_accuracy_average/args.log_step)) 
@@ -220,21 +213,19 @@ def run(save_path, args):
 
                 print(sampled_captions)
 
-
-
             # Save the model
-            if (total_iterations + 1) % args.save_step == 0:
+            if (total_iterations) % args.save_step == 0:
                 torch.save(netG.state_dict(), 
                            os.path.join(save_path, 
                                         'netG-%d.pkl' %(gen_iterations)))
 
 
-            if (total_iterations + 1) % args.tb_log_step == 0:
+            if (total_iterations) % args.tb_log_step == 0:
                 log_value('D_Loss', D_loss.data[0], gen_iterations)
                 log_value('G_Loss', G_loss.data[0], gen_iterations)
 
 
-            total_iterations += 1
+
 
             # if (total_iterations) % 30000 == 0:
             #     validate(encoder, netG, val_data_loader, val_state, criterion, vocab, total_iterations)
@@ -385,7 +376,9 @@ if __name__ == '__main__':
                         help='dimension of gru hidden states')
     parser.add_argument('--num_layers', type=int , default=1 ,
                         help='number of layers in gru')
-    parser.add_argument('--pretrained', type=str)
+    parser.add_argument('--netG', type=str, default="logs/aesthetics/mle_baseline_bs16/decoder-1-10000.pkl")
+    parser.add_argument('--netE', type=str, default="logs/aesthetics/mle_baseline_bs16/encoder-1-10000.pkl")
+
     
     parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=16)
