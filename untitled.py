@@ -51,7 +51,7 @@ class CocoDataset(data.Dataset):
         caption.append(vocab('<end>'))
         target = torch.Tensor(caption)
 
-        wrong_caption = coco.anns[random.choice(self.ids)]['caption']
+        wrong_caption = random.choice(coco.anns)['caption']
         tokens = nltk.tokenize.word_tokenize(str(caption).lower())
         caption = []
         caption.append(vocab('<start>'))
@@ -73,7 +73,7 @@ class CocoDataset(data.Dataset):
 
 
 
-        return image, target, img_id, wrong_target
+        return image, target, img_id
 
     def __len__(self):
         return len(self.ids) - 6 # hack until i can figure out how to fix <unk><unk><unk error 
@@ -156,13 +156,13 @@ def collate_fn_wrong(data):
         end = lengths[i]
         targets[i, :end] = cap[:end]
 
-    wrong_lengths = [len(cap) for cap in wrong_captions]
-    wrong_targets = torch.zeros(len(wrong_captions), max(wrong_lengths)).long()
-    for i, cap in enumerate(wrong_captions):
-        end = lengths[i]
-        wrong_targets[i, :end] = cap[:end]
+    # wrong_lengths = [len(cap) for cap in wrong_captions]
+    # wrong_targets = torch.zeros(len(wrong_captions), max(lengths)).long()
+    # for i, cap in enumerate(wrong_captions):
+    #     end = lengths[i]
+    #     wrong_targets[i, :end] = cap[:end]
 
-    return images, targets, lengths, img_id, wrong_targets, wrong_lengths
+    return images, targets, lengths, img_id
 
 def collate_fn(data):
     """Creates mini-batch tensors from the list of tuples (image, caption).
@@ -203,7 +203,7 @@ def get_loader(mode, vocab, transform, batch_size, shuffle, num_workers):
         coco = CocoDataset(mode=mode,
                            vocab=vocab,
                            transform=transform)
-        collate_fn_to_use = collate_fn_wrong
+        collate_fn_to_use = collate_fn
     elif mode == "val":
         coco = CocoValDataset(mode=mode,
                            vocab=vocab,

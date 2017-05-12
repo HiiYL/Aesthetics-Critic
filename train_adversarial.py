@@ -121,7 +121,7 @@ def run(save_path, args):
         for i, (images, captions, lengths) in enumerate(train_data_loader):
             # Set mini-batch dataset
             images = Variable(images)
-            captions = Variable(captions)
+            captions = Variable(captions, lengths)
             if torch.cuda.is_available():
                 images = images.cuda()
                 captions = captions.cuda()
