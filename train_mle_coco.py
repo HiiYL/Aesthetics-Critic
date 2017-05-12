@@ -66,7 +66,7 @@ def run(save_path, args):
                              shuffle=False, num_workers=args.num_workers)
 
     # Build the models
-    encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True), requires_grad=True)
+    encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True), requires_grad=False)
     netG = G(args.embed_size, args.hidden_size, vocab, args.num_layers)
 
     if args.netG:
@@ -96,8 +96,8 @@ def run(save_path, args):
         y_onehot = y_onehot.cuda()
 
     params = [
-                {'params': netG.parameters()},
-                {'params': encoder.parameters(), 'lr': 0.1 * args.learning_rate}
+                {'params': netG.parameters()}
+                #{'params': encoder.parameters(), 'lr': 0.1 * args.learning_rate}
             ]
     optimizer = torch.optim.Adam(params, lr=args.learning_rate)
 
@@ -127,11 +127,13 @@ def run(save_path, args):
             y_v = Variable(y_onehot)
 
             netG.zero_grad()
-            features = encoder(images).detach()
-            out = netG(features, y_v, lengths, state, teacher_forced=True)
+            features_g, features_l = encoder(images)
+            features_g, features_l = features_g.detach(), features_l.detach()
+            out = netG((features_g, features_l), y_v, lengths, state, teacher_forced=True)
 
             mle_loss = criterion(out, targets)
             mle_loss.backward()
+            torch.nn.utils.clip_grad_norm(netG.parameters(), args.clip)
             optimizer.step()
 
             # Print log info
@@ -141,7 +143,7 @@ def run(save_path, args):
 
             if total_iterations % 100 == 0:
                 print("")
-                outputs_free,_  = netG(Variable(features.data, volatile=True), y_v, lengths, state, teacher_forced=False)
+                outputs_free,_  = netG((features_g, features_l), y_v, lengths, state, teacher_forced=False)
 
                 sampled_ids_free = torch.max(outputs_free,1)[1].squeeze()
                 sampled_ids_free = pad_packed_sequence([sampled_ids_free, batch_sizes], batch_first=True)[0]
@@ -184,7 +186,7 @@ def run(save_path, args):
                 log_value('Loss', mle_loss.data[0], total_iterations)
                 log_value('Perplexity', np.exp(mle_loss.data[0]), total_iterations)
 
-            if (total_iterations+1) % args.save_step == 0:
+            if (total_iterations+1) % 1 == 0:
                 validate(encoder, netG, val_data_loader, val_state, criterion, vocab, total_iterations)
 
             total_iterations += 1
@@ -227,10 +229,11 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
         targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
 
         # Forward, Backward and Optimize
-        features = encoder(images)
-        features = Variable(features.data, volatile=True)
+        features_g, features_l = encoder(images)
+        features_g = Variable(features_g.detach().data, volatile=True)
+        features_l = Variable(features_l.detach().data, volatile=True)
 
-        sampled_ids_list, terminated_confidences = netG.beamSearch(features, state, n=3, diverse_gamma=0.0)
+        sampled_ids_list, terminated_confidences = netG.beamSearch((features_g, features_l), state, n=3, diverse_gamma=0.0)
         sampled_ids_list = np.array([ sampled_ids.cpu().data.numpy() for sampled_ids in sampled_ids_list ])
 
         max_index = np.argmin(terminated_confidences) ## Should this be min?
@@ -334,7 +337,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--learning_rate', type=float, default=0.001)
-    parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')
+    parser.add_argument('--clip', type=float, default=0.25,help='gradient clipping')
     args = parser.parse_args()
     print(args)
 

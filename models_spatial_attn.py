@@ -34,12 +34,15 @@ class EncoderCNN(nn.Module):
         self.Mixed_7a = inception.Mixed_7a
         self.Mixed_7b = inception.Mixed_7b
         self.Mixed_7c = inception.Mixed_7c
-
-        self.fc = nn.Linear(2048, 512)
-        self.bn = nn.BatchNorm2d(512, momentum=0.01)
+        self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
 
         for parameters in self.parameters():
             parameters.requires_grad = requires_grad
+
+        self.global_fc = nn.Linear(2048, 512)
+        self.local_fc = nn.Linear(2048, 512)
+        self.relu = nn.ReLU()
+
         
     def forward(self, x):
         """Extract the image feature vectors."""
@@ -83,25 +86,23 @@ class EncoderCNN(nn.Module):
         # 8 x 8 x 2048
         x = self.Mixed_7c(x)
         # 8 x 8 x 2048
-        x_global = F.avg_pool2d(x, kernel_size=x.size()[2:]).squeeze(2).squeeze(2)
+        #x = F.avg_pool2d(x, kernel_size=x.size()[2:])
 
         # 1 x 1 x 2048
         x = F.dropout(x, training=self.training)
         # 1 x 1 x 2048
         # x = x.view(x.size(0), -1)
-        # batch x 2048 x 8 x 8 -> batch x 8 x 8 x 2048
-        x = x.permute(0,2,3,1).contiguous()
-        # batch x 8 x 8 x 2048 -> batch * 64 x 2048
-        batch, im_size_w , im_size_h , depth = x.size()
-        x = x.view( -1 , depth)
-        # batch * 64 x 2048 -> batch * 64 x 512
-        x = self.fc(x)
-        # batch * 64 x 512 -> batch x 64 x 512
-        x_local = x.view(batch, im_size_w * im_size_h, -1)
+        # 2048
+        global_x = F.avg_pool2d(x, kernel_size=x.size()[2:]).view(x.size(0), -1)
+        global_features = self.bn(self.global_fc(global_x))
 
-        x_global = self.fc(x_global)
+        local_x = x.view(x.size(0), x.size(1), -1)
+        local_features = []
+        for i in range(local_x.size(2)):
+            local_features.append(self.local_fc(local_x[:,:,i]).unsqueeze(2))
 
-        return x_global, x_local
+        local_features = self.bn(torch.cat(local_features,2))
+        return global_features, local_features
 
 class G(nn.Module):
     def __init__(self, embed_size, hidden_size, vocab, num_layers):
@@ -112,32 +113,17 @@ class G(nn.Module):
         self.vocab_size = len(vocab)
         self.hidden_size = hidden_size
 
-        self.linear = nn.Linear(hidden_size, self.vocab_size)
+        self.linear = nn.Linear(hidden_size * 2, self.vocab_size)
         self.linear2 = nn.Linear(self.vocab_size, embed_size)
-
-        #self.conv = nn.Conv2d(2048, 32, kernel_size=3, stride=1, padding=1)
         self.fc = nn.Linear(2048, embed_size)
-        self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
         
-        self.gru_cell = nn.GRUCell(embed_size, hidden_size)
-        self.attn = nn.Linear( hidden_size * 2, 64)
+        self.lstm_cell = nn.LSTMCell(embed_size * 2, hidden_size)
+        self.attn = nn.Linear(hidden_size * 2, 64)
         self.attn_combine = nn.Linear( hidden_size * 2, hidden_size)
-
-        # self.gru_cell_2 = nn.GRUCell(embed_size, hidden_size)
-        # self.attn_2 = nn.Linear( hidden_size * 2, hidden_size)
-        # self.attn_combine_2 = nn.Linear( hidden_size * 2, hidden_size)
-
-        # self.gru_cell_3 = nn.GRUCell(embed_size, hidden_size)
-        # self.attn_3 = nn.Linear( hidden_size * 2, hidden_size)
-        # self.attn_combine_3 = nn.Linear( hidden_size * 2, hidden_size)
-
-        # self.final_combine = nn.Linear( hidden_size * 3, hidden_size)
 
         self.log_softmax = nn.LogSoftmax()
         self.softmax = nn.Softmax()
         self.relu = nn.ReLU()
-
-
 
         self.init_weights()
     
@@ -157,46 +143,16 @@ class G(nn.Module):
         self.attn_combine.weight.data.normal_(0.0, 0.02)
         self.attn_combine.bias.data.fill_(0)
 
-        # self.attn_2.weight.data.normal_(0.0, 0.02)
-        # self.attn_2.bias.data.fill_(0)
-        # self.attn_combine_2.weight.data.normal_(0.0, 0.02)
-        # self.attn_combine_2.bias.data.fill_(0)
 
-        # self.attn_3.weight.data.normal_(0.0, 0.02)
-        # self.attn_3.bias.data.fill_(0)
-        # self.attn_combine_3.weight.data.normal_(0.0, 0.02)
-        # self.attn_combine_3.bias.data.fill_(0)
+    def lstm_attention(self, inputs, hx,cx, features):
+        attn_weights = F.softmax(self.attn(torch.cat((hx,cx),1))).unsqueeze(1)
+        cx = torch.bmm(attn_weights, features.permute(0,2,1)).squeeze(1)
+        hx, cx = self.lstm_cell(inputs, (hx,cx))
 
-        # self.final_combine.weight.data.normal_(0.0, 0.02)
-        # self.final_combine.bias.data.fill_(0)
+        return hx, cx
 
-
-    def gru_attention(self, inputs, hx, features):
-        attn_weights = F.softmax(self.attn(torch.cat((inputs, hx), 1)))
-        attn_applied = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
-        inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
-        hx_1 = self.gru_cell(inputs, hx)
-        #hx_1 = hx_1 + hx
-
-        #attn_weights = F.softmax(self.attn_2(torch.cat((inputs, hx_1), 1)))
-        #attn_applied = features * attn_weights
-        #inputs = self.relu(self.attn_combine_2(torch.cat((inputs, attn_applied ), 1)))
-        #hx_2 = self.gru_cell_2(inputs, hx_1)
-        #hx_2 = hx_2 + hx_1
-
-        #attn_weights = F.softmax(self.attn_3(torch.cat((inputs, hx_2), 1)))
-        #attn_applied = features * attn_weights
-        #inputs = self.relu(self.attn_combine_3(torch.cat((inputs, attn_applied ), 1)))
-        #hx_3 = self.gru_cell_3(inputs, hx_2)
-
-        #out = self.final_combine(torch.cat((torch.cat((hx_1,hx_2),1), hx_3),1))
-        return hx_1
-
-         
     def forward(self, features, captions, lengths, state, teacher_forced=True):
         """Decode image feature vectors and generates captions."""
-        #features = self.conv(features)
-        #features = self.bn(self.fc(features))
         if teacher_forced:
             return self._forward_forced_cell(features, captions, lengths, state)
         else:
@@ -204,7 +160,6 @@ class G(nn.Module):
 
 
     def _forward_forced_cell(self, features, captions, lengths, states):
-        features, features_local = features
         if isinstance(captions, tuple):
             captions, batch_sizes = captions
             embeddings = self.linear2(captions)
@@ -215,39 +170,46 @@ class G(nn.Module):
             embeddings = self.linear2(captions)
             embeddings = embeddings.view(batch_size, caption_length, -1)
 
-
-        embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
-        hiddens_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
-        hx = states[0].squeeze()
+        features, features_local = features
+        output_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.vocab_size))
+        hx, cx = states
+        hx, cx = hx[0], cx[0]
+        outputs = []
         for i in range(lengths[0]):
             inputs = embeddings[:,i,:]
+            inputs = torch.cat((inputs, features), 1)
 
-            hx = self.gru_attention(inputs, hx, features_local)
-            hiddens_tensor[ :, i, :] = hx
+            hx,cx = self.lstm_attention(inputs, hx,cx, features_local)
+            outputs = self.linear(torch.cat((hx,cx),1))
+            output_tensor [:,i,:] = outputs
 
-        hiddens_tensor_packed, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
-        outputs = self.linear(hiddens_tensor_packed)
-        return outputs#, hiddens_tensor
+            #hiddens_tensor[ :, i, :] = hx
+        outputs, _ = pack_padded_sequence(output_tensor, lengths, batch_first=True)
+        #outputs = self.linear(hiddens_tensor_packed)
+        return outputs
 
     def _forward_free_cell(self, features, lengths, states):
         output_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.vocab_size))
-        hiddens_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
-
         features, features_local = features
-        inputs = features
-        hx = states[0].squeeze()
-        for i in range(lengths[0]):
-            hx = self.gru_attention(inputs, hx, features_local)
-            outputs = self.linear(hx)
-            outputs = self.gumbel_sample(outputs, tau=0.5)
-            inputs = self.linear2(outputs).view(outputs.size(0), -1)
 
-            hiddens_tensor[:,i,:] = hx
+        inputs = Variable(torch.cuda.FloatTensor(features.size(0),self.vocab_size).fill_(0), volatile=True)
+        inputs.data[:,1] = 1
+        inputs = self.linear2(inputs).view(features.size(0), -1)
+
+        hx, cx = states
+        hx, cx = hx[0], cx[0]
+        for i in range(lengths[0]):
+            inputs = torch.cat((inputs, features), 1)
+
+            hx ,cx  = self.lstm_attention(inputs, hx,cx, features_local)
+            outputs = self.linear(torch.cat((hx,cx),1))
+            outputs = self.gumbel_sample(outputs, tau=0.1)
+            inputs  = self.linear2(outputs).view(outputs.size(0), -1)
+
             output_tensor [:,i,:] = outputs
 
         output_tensor, _ = pack_padded_sequence(output_tensor, lengths, batch_first=True)
-        #hiddens_tensor, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
-        return output_tensor, hiddens_tensor
+        return output_tensor
 
     def gumbel_sample(self,input, tau):
         noise = torch.rand(input.size()).cuda()
@@ -259,13 +221,15 @@ class G(nn.Module):
         return x.view_as(input)
 
     def beamSearch(self, features, states, n=1, diverse_gamma=0.0):
-        features, features_local = features
+        features = self.conv(features)
+        features = features.view(features.size(0), -1)
+        features = self.bn(self.fc(features))
 
         inputs = Variable(features.data, volatile=True)
 
         states = states[0].squeeze(0)
-        states = self.gru_attention(inputs, states, features_local)            # (batch_size, 1, hidden_size)
-        outputs = self.log_softmax(self.linear(states.squeeze(1)))             # (batch_size, vocab_size)
+        states = self.gru_attention(inputs, states, features)            # (batch_size, 1, hidden_size)
+        outputs = self.log_softmax(self.linear(states.squeeze(1)))           # (batch_size, vocab_size)
         confidences, best_choices = outputs.topk(n)
 
         cached_states = [states] * n
@@ -295,8 +259,8 @@ class G(nn.Module):
 
                 current_confidence = confidences[:,choice_index]
 
-                out_states = self.gru_attention(inputs, cached_states[choice_index], features_local) # (batch_size, 1, hidden_size)
-                outputs = self.log_softmax(self.linear(out_states.squeeze(1)))                       # (batch_size, vocab_size)
+                out_states = self.gru_attention(inputs, cached_states[choice_index], features) # (batch_size, 1, hidden_size)
+                outputs = self.log_softmax(self.linear(out_states.squeeze(1)))                 # (batch_size, vocab_size)
 
                 # pick n best nodes for each possible choice
                 inner_confidences, inner_best_choices = outputs.topk(n)
