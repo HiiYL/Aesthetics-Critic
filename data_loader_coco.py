@@ -51,13 +51,13 @@ class CocoDataset(data.Dataset):
         caption.append(vocab('<end>'))
         target = torch.Tensor(caption)
 
-        wrong_caption = coco.anns[random.choice(self.ids)]['caption']
-        tokens = nltk.tokenize.word_tokenize(str(caption).lower())
-        caption = []
-        caption.append(vocab('<start>'))
-        caption.extend([vocab(token) for token in tokens])
-        caption.append(vocab('<end>'))
-        wrong_target = torch.Tensor(caption)
+        # wrong_caption = coco.anns[random.choice(self.ids)]['caption']
+        # tokens = nltk.tokenize.word_tokenize(str(caption).lower())
+        # caption = []
+        # caption.append(vocab('<start>'))
+        # caption.extend([vocab(token) for token in tokens])
+        # caption.append(vocab('<end>'))
+        # wrong_target = torch.Tensor(caption)
 
 
 
@@ -73,7 +73,7 @@ class CocoDataset(data.Dataset):
 
 
 
-        return image, target, img_id, wrong_target
+        return image, target, img_id#, wrong_target
 
     def __len__(self):
         return len(self.ids) - 6 # hack until i can figure out how to fix <unk><unk><unk error 
@@ -203,7 +203,7 @@ def get_loader(mode, vocab, transform, batch_size, shuffle, num_workers):
         coco = CocoDataset(mode=mode,
                            vocab=vocab,
                            transform=transform)
-        collate_fn_to_use = collate_fn_wrong
+        collate_fn_to_use = collate_fn#collate_fn_wrong
     elif mode == "val":
         coco = CocoValDataset(mode=mode,
                            vocab=vocab,

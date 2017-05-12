@@ -96,10 +96,12 @@ def run(save_path, args):
         y_onehot = y_onehot.cuda()
 
     params = [
-                {'params': netG.parameters()}
+                {'params': netG.parameters()},
                 #{'params': encoder.parameters(), 'lr': 0.1 * args.learning_rate}
+                {'params': encoder.fc.parameters()}
+                
             ]
-    optimizer = torch.optim.Adam(params, lr=args.learning_rate)
+    optimizer = torch.optim.Adam(params, lr=args.learning_rate,betas=(0.8, 0.999))
 
     # Train the Models
     total_step = len(train_data_loader)
@@ -186,7 +188,7 @@ def run(save_path, args):
                 log_value('Loss', mle_loss.data[0], total_iterations)
                 log_value('Perplexity', np.exp(mle_loss.data[0]), total_iterations)
 
-            if (total_iterations+1) % 1 == 0:
+            if (total_iterations+1) % args.save_step == 0:
                 validate(encoder, netG, val_data_loader, val_state, criterion, vocab, total_iterations)
 
             total_iterations += 1
@@ -243,9 +245,9 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
         sampled_caption = []
         for word_id in sampled_ids:
             word = vocab.idx2word[word_id]
-            if word == '<end>':
+            if word == '<end>' or word == '<pad>':
                 break
-            if word != '<start>' and word != '<pad>':
+            if word != '<start>':
                 sampled_caption.append(word)
 
         sentence = ' '.join(sampled_caption)
@@ -336,7 +338,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--num_workers', type=int, default=2)
-    parser.add_argument('--learning_rate', type=float, default=0.001)
+    parser.add_argument('--learning_rate', type=float, default=5e-4)
     parser.add_argument('--clip', type=float, default=0.25,help='gradient clipping')
     args = parser.parse_args()
     print(args)

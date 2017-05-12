@@ -35,11 +35,12 @@ class EncoderCNN(nn.Module):
         self.Mixed_7b = inception.Mixed_7b
         self.Mixed_7c = inception.Mixed_7c
 
-        self.fc = nn.Linear(2048, 512)
-        self.bn = nn.BatchNorm2d(512, momentum=0.01)
-
         for parameters in self.parameters():
             parameters.requires_grad = requires_grad
+
+        self.fc = nn.Linear(2048, 512)
+
+
         
     def forward(self, x):
         """Extract the image feature vectors."""
@@ -83,11 +84,9 @@ class EncoderCNN(nn.Module):
         # 8 x 8 x 2048
         x = self.Mixed_7c(x)
         # 8 x 8 x 2048
-        x_global = F.avg_pool2d(x, kernel_size=x.size()[2:]).squeeze(2).squeeze(2)
-
-        # 1 x 1 x 2048
         x = F.dropout(x, training=self.training)
-        # 1 x 1 x 2048
+
+        x_global = F.avg_pool2d(x, kernel_size=x.size()[2:]).squeeze(2).squeeze(2)
         # x = x.view(x.size(0), -1)
         # batch x 2048 x 8 x 8 -> batch x 8 x 8 x 2048
         x = x.permute(0,2,3,1).contiguous()
