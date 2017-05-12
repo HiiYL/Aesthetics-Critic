@@ -118,19 +118,21 @@ class G(nn.Module):
         self.fc = nn.Linear(2048, embed_size)
         self.bn = nn.BatchNorm1d(embed_size, momentum=0.01)
         
-        self.gru_cell = nn.GRUCell(embed_size, hidden_size)
+        self.gru_cell   = nn.GRUCell(embed_size, hidden_size)
+        self.gru_cell_2 = nn.GRUCell(hidden_size, hidden_size)
+        self.gru_cell_3 = nn.GRUCell(hidden_size, hidden_size)
         self.attn = nn.Linear( hidden_size * 2, 64)
         self.attn_combine = nn.Linear( hidden_size * 2, hidden_size)
 
-        # self.gru_cell_2 = nn.GRUCell(embed_size, hidden_size)
-        # self.attn_2 = nn.Linear( hidden_size * 2, hidden_size)
-        # self.attn_combine_2 = nn.Linear( hidden_size * 2, hidden_size)
+        self.gru_cell_2 = nn.GRUCell(embed_size, hidden_size)
+        self.attn_2 = nn.Linear( hidden_size * 2, hidden_size)
+        self.attn_combine_2 = nn.Linear( hidden_size * 2, hidden_size)
 
-        # self.gru_cell_3 = nn.GRUCell(embed_size, hidden_size)
-        # self.attn_3 = nn.Linear( hidden_size * 2, hidden_size)
-        # self.attn_combine_3 = nn.Linear( hidden_size * 2, hidden_size)
+        self.gru_cell_3 = nn.GRUCell(embed_size, hidden_size)
+        self.attn_3 = nn.Linear( hidden_size * 2, hidden_size)
+        self.attn_combine_3 = nn.Linear( hidden_size * 2, hidden_size)
 
-        # self.final_combine = nn.Linear( hidden_size * 3, hidden_size)
+        self.final_combine = nn.Linear( hidden_size * 3, hidden_size)
 
         self.log_softmax = nn.LogSoftmax()
         self.softmax = nn.Softmax()
@@ -156,18 +158,18 @@ class G(nn.Module):
         self.attn_combine.weight.data.normal_(0.0, 0.02)
         self.attn_combine.bias.data.fill_(0)
 
-        # self.attn_2.weight.data.normal_(0.0, 0.02)
-        # self.attn_2.bias.data.fill_(0)
-        # self.attn_combine_2.weight.data.normal_(0.0, 0.02)
-        # self.attn_combine_2.bias.data.fill_(0)
+        self.attn_2.weight.data.normal_(0.0, 0.02)
+        self.attn_2.bias.data.fill_(0)
+        self.attn_combine_2.weight.data.normal_(0.0, 0.02)
+        self.attn_combine_2.bias.data.fill_(0)
 
-        # self.attn_3.weight.data.normal_(0.0, 0.02)
-        # self.attn_3.bias.data.fill_(0)
-        # self.attn_combine_3.weight.data.normal_(0.0, 0.02)
-        # self.attn_combine_3.bias.data.fill_(0)
+        self.attn_3.weight.data.normal_(0.0, 0.02)
+        self.attn_3.bias.data.fill_(0)
+        self.attn_combine_3.weight.data.normal_(0.0, 0.02)
+        self.attn_combine_3.bias.data.fill_(0)
 
-        # self.final_combine.weight.data.normal_(0.0, 0.02)
-        # self.final_combine.bias.data.fill_(0)
+        self.final_combine.weight.data.normal_(0.0, 0.02)
+        self.final_combine.bias.data.fill_(0)
 
 
     def gru_attention(self, inputs, hx, features):
@@ -175,21 +177,20 @@ class G(nn.Module):
         attn_applied = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
         inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
         hx_1 = self.gru_cell(inputs, hx)
-        #hx_1 = hx_1 + hx
 
-        #attn_weights = F.softmax(self.attn_2(torch.cat((inputs, hx_1), 1)))
-        #attn_applied = features * attn_weights
-        #inputs = self.relu(self.attn_combine_2(torch.cat((inputs, attn_applied ), 1)))
-        #hx_2 = self.gru_cell_2(inputs, hx_1)
-        #hx_2 = hx_2 + hx_1
 
-        #attn_weights = F.softmax(self.attn_3(torch.cat((inputs, hx_2), 1)))
-        #attn_applied = features * attn_weights
-        #inputs = self.relu(self.attn_combine_3(torch.cat((inputs, attn_applied ), 1)))
-        #hx_3 = self.gru_cell_3(inputs, hx_2)
+        attn_weights = F.softmax(self.attn(torch.cat((inputs, hx_1), 1)))
+        attn_applied = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
+        inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
+        hx_2 = self.gru_cell_2(inputs, hx_1)
 
-        #out = self.final_combine(torch.cat((torch.cat((hx_1,hx_2),1), hx_3),1))
-        return hx_1
+        attn_weights = F.softmax(self.attn(torch.cat((inputs, hx_2), 1)))
+        attn_applied = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
+        inputs = self.relu(self.attn_combine(torch.cat((inputs, attn_applied ), 1)))
+        hx_3 = self.gru_cell_2(inputs, hx_2)
+
+        out = self.final_combine(torch.cat((torch.cat((hx_1,hx_2),1), hx_3),1))
+        return out
 
          
     def forward(self, features, captions, lengths, state, teacher_forced=True):
