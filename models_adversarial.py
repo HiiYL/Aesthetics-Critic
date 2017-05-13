@@ -362,7 +362,7 @@ class G_Spatial(nn.Module):
         self.linear = nn.Linear(hidden_size * 2, self.vocab_size)
         self.linear2 = nn.Linear(self.vocab_size, embed_size)
 
-        self.lstm_cell   = nn.LSTMCell(embed_size * 2, hidden_size)
+        self.lstm_cell   = nn.LSTMCell(embed_size, hidden_size)
         self.attn = nn.Linear( hidden_size, 64)
         self.attn_combine = nn.Linear( hidden_size * 3, hidden_size)
 
@@ -446,14 +446,14 @@ class G_Spatial(nn.Module):
             embeddings = self.linear2(captions)
             embeddings = embeddings.view(batch_size, caption_length, -1)
 
-        #embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
+        embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
         #hiddens_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
         hiddens_ctx_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size * 2))
         hx, cx = states
         hx, cx = hx[0], cx[0]
         for i in range(lengths[0]):
-            inputs = torch.cat((embeddings[:,i,:], features),1)
-            hx, cx = self.gru_attention(inputs, hx,cx, features_local)
+            #inputs = torch.cat((embeddings[:,i,:], features),1)
+            hx, cx = self.gru_attention(embeddings[:,i,:], hx,cx, features_local)
             hiddens_ctx_tensor[ :, i, :] = torch.cat((hx,cx),1)
 
         hiddens_ctx_tensor_packed, _ = pack_padded_sequence(hiddens_ctx_tensor, lengths, batch_first=True)
@@ -465,17 +465,17 @@ class G_Spatial(nn.Module):
         hiddens_ctx_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size * 2))
 
         features, features_local = features
-        #inputs = features
-        onehot = torch.cuda.FloatTensor(features.size(0), self.vocab_size).fill_(0)
-        onehot[:,0] = 1
-        onehot = Variable(onehot, volatile=True)
-        inputs = self.linear2(onehot)
+        inputs = features
+        #onehot = torch.cuda.FloatTensor(features.size(0), self.vocab_size).fill_(0)
+        #onehot[:,0] = 1
+        #onehot = Variable(onehot, volatile=True)
+        #inputs = self.linear2(onehot)
 
         hx, cx = states
         hx, cx = hx[0], cx[0]
 
         for i in range(lengths[0]):
-            inputs = torch.cat((inputs, features),1)
+            #inputs = torch.cat((inputs, features),1)
             hx, cx = self.gru_attention(inputs, hx,cx, features_local)
 
             combined = torch.cat((hx,cx), 1)

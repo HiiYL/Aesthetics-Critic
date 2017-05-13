@@ -9,9 +9,11 @@ annotations = a['annotations'] + b['annotations']
 train_split = {}
 val_split = {}
 test_split = {}
-train_split['images'] = images[:-10000]
-val_split['images'] = images[-10000:-5000]
-test_split['images'] = images[-5000:]
+val_split['images'] = images[:5000]
+test_split['images'] = images[5000:10000]
+train_split['images'] = images[10000:]
+
+
 
 # for efficiency lets group annotations by image
 itoa = {}
