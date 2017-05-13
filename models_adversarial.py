@@ -82,7 +82,7 @@ class EncoderCNN(nn.Module):
         # 8 x 8 x 2048
         x = self.Mixed_7c(x)
         # 8 x 8 x 2048
-        x = F.dropout(x, training=self.training)
+        #x = F.dropout(x, training=self.training)
 
         x_global, x_local = self.fc(x)
 
@@ -114,8 +114,8 @@ class EncoderFC(nn.Module):
         x = self.fc_local(x)
 
         # batch * 64 x 512 -> batch x 64 x 512
-        x_local = x.view(batch, im_size_w * im_size_h, -1)
-        x_global = self.fc_global(x_global)
+        x_local  = F.dropout(x.view(batch, im_size_w * im_size_h, -1))
+        x_global = F.dropout(self.fc_global(x_global))
 
         return x_global, x_local
 
@@ -361,11 +361,9 @@ class G_Spatial(nn.Module):
 
         self.linear = nn.Linear(hidden_size * 2, self.vocab_size)
         self.linear2 = nn.Linear(self.vocab_size, embed_size)
-
-
         self.linear3 = nn.Linear(embed_size * 2, embed_size)
         self.lstm_cell   = nn.LSTMCell(embed_size, hidden_size)
-        self.attn = nn.Linear( hidden_size, 64)
+        self.attn = nn.Linear( hidden_size, 289)
         self.attn_combine = nn.Linear( hidden_size * 3, hidden_size)
 
         # self.gru_cell_2 = nn.GRUCell(hidden_size, hidden_size)
