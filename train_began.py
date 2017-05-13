@@ -39,16 +39,16 @@ parser.add_argument('--tb_log_step', type=int , default=100,
                     help='step size for prining log info')
 parser.add_argument('--save_step', type=int , default=10000,
                     help='step size for saving trained models')
-parser.add_argument('--poll_step', default=1000, help="how often to poll if training has plateaued")
-parser.add_argument('--patience', default=3, help="how long to wait before reducing lr")
+parser.add_argument('--poll_step', default=10000, help="how often to poll if training has plateaued")
+parser.add_argument('--patience', default=3, help="how many poll steps to wait before reducing lr")
 
 # Model parameters
 parser.add_argument('--embed_size', type=int , default=512 ,
                     help='dimension of word embedding vectors')
 parser.add_argument('--hidden_size', type=int , default=512 ,
                     help='dimension of gru hidden states')
-parser.add_argument('--num_layers', type=int , default=1 ,
-                    help='number of layers in gru')
+parser.add_argument('--num_layers', type=int , default=2 ,
+                    help='number of layers in lstm')
 parser.add_argument('--pretrained', type=str)
 
 parser.add_argument('--beta1', type=float, default=0.9, help='beta1 for adam. default=0.5')
@@ -79,7 +79,7 @@ print(args)
 
 transform = transforms.Compose([
     transforms.Scale((args.image_size,args.image_size)),
-    transforms.RandomHorizontalFlip(), 
+    #transforms.RandomHorizontalFlip(), 
     transforms.ToTensor(), 
     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
@@ -153,6 +153,7 @@ def train():
     fixed_x = None
     fixed_caption = None
     best_measure = 1e7
+    times_reduced_lr=0
     patience = args.patience
     measure_tracker = AverageTracker()
 
@@ -179,9 +180,9 @@ def train():
             z_D_wrong_caption = torch.cat((z_D, encoded_wrong_caption), 1)
 
             G_zD = netG(z_D_caption.detach())
-            AE_x = netD(X, encoded_caption)
-            AE_x_wrong = netD(X, encoded_wrong_caption)
-            AE_G_zD = netD(G_zD.detach(), encoded_caption)
+            AE_x = netD(X, encoded_caption.detach())
+            AE_x_wrong = netD(X, encoded_wrong_caption.detach())
+            AE_G_zD = netD(G_zD.detach(), encoded_caption.detach())
 
             d_loss_real = torch.mean(torch.abs(AE_x - X))
             d_loss_wrong = torch.mean(torch.abs(AE_x_wrong - X))
@@ -192,14 +193,13 @@ def train():
             optimizerD.step()
 
             netG.zero_grad()
-
-            encoded_caption = netR(captions, lengths)
+            netR.zero_grad()
             z_G.data.normal_(0,1)
             z_G_caption = torch.cat((z_G, encoded_caption), 1)
 
             G_zG = netG(z_G_caption)
             AE_G_zG = netD(G_zG, encoded_caption)
-            G_loss = torch.mean(torch.abs(G_zG - AE_G_zG.detach()))
+            G_loss = torch.mean(torch.abs(G_zG - AE_G_zG))
             G_loss.backward()
 
             optimizerG.step()
@@ -244,7 +244,10 @@ def train():
             if total_iterations % args.poll_step == 0:
                 measure_avg = measure_tracker.get_average()
                 if measure_avg < best_measure:
-                    best_measure = measure
+                    print("[!] Measure decreased | Best : {} | Current: {} | Patience: {}"
+                        .format(best_measure, measure_avg, patience ))
+                    best_measure = measure_avg
+
                 else:
                     patience -= 1
                     print("[!] Measure not decreasing | Best : {} | Current: {} | Patience: {}"
@@ -252,11 +255,13 @@ def train():
                     if patience <= 0:
                         patience = args.patience
                         times_reduced_lr += 1
-                        lr =  args.lr * (0.5 ** times_reduced_lr)
+                        lr =  args.learning_rate * (0.5 ** times_reduced_lr)
                         print("[!] Reducing lr to {} at iteration {}".format(lr, total_iterations))
-                        for param_group in argsimizerG.param_groups:
+                        for param_group in optimizerG.param_groups:
                             param_group['lr'] = lr
-                        for param_group in argsimizerD.param_groups:
+                        for param_group in optimizerD.param_groups:
+                            param_group['lr'] = lr
+                        for param_group in optimizerR.param_groups:
                             param_group['lr'] = lr
                 measure_tracker.reset()
 

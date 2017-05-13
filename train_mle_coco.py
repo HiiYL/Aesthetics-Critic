@@ -15,7 +15,7 @@ import numpy as np
 import os
 from data_loader_coco import get_loader 
 from build_vocab import Vocabulary
-from models_adversarial import EncoderCNN, G,D, InceptionNet
+from models_adversarial import EncoderCNN, G,D, InceptionNet, G_Spatial
 import pickle
 import datetime
 
@@ -44,15 +44,16 @@ def run(save_path, args):
     # Image preprocessing
     train_transform = transforms.Compose([
         transforms.Scale((299,299)),
-        transforms.RandomHorizontalFlip(), 
-        transforms.ToTensor(), 
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        ])
 
 
     test_transform = transforms.Compose([
         transforms.Scale((299,299)),
-        transforms.ToTensor(), 
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        ])
     
     # Load vocabulary wrapper.
     with open(args.vocab_path, 'rb') as f:
@@ -67,7 +68,7 @@ def run(save_path, args):
 
     # Build the models
     encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True), requires_grad=False)
-    netG = G(args.embed_size, args.hidden_size, vocab, args.num_layers)
+    netG = G_Spatial(args.embed_size, args.hidden_size, vocab, args.num_layers)
 
     if args.netG:
         print("[!]loading pretrained model....")
@@ -310,7 +311,7 @@ if __name__ == '__main__':
                         help='path for saving trained models')
     parser.add_argument('--crop_size', type=int, default=299 ,
                         help='size for randomly cropping images')
-    parser.add_argument('--vocab_path', type=str, default='data/vocab-py2.pkl',
+    parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
                         help='path for vocabulary wrapper')
     parser.add_argument('--dataset', type=str, default='coco' ,
                         help='dataset to use')
