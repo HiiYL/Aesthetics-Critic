@@ -414,7 +414,7 @@ class G_Spatial(nn.Module):
 
 
     def gru_attention(self, inputs, hx,cx, features):
-        #inputs = self.linear3(inputs)
+        inputs = self.linear3(inputs)
         hx,cx = self.lstm_cell(inputs, (hx,cx))
         attn_weights = F.softmax(self.attn(hx))
         cx = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
@@ -452,14 +452,14 @@ class G_Spatial(nn.Module):
             embeddings = self.linear2(captions)
             embeddings = embeddings.view(batch_size, caption_length, -1)
 
-        #embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
+        embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
         #hiddens_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
         hiddens_ctx_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size * 2))
         hx, cx = states
         hx, cx = hx[0], cx[0]
         for i in range(lengths[0]):
             inputs = embeddings[:,i,:]
-            #inputs = torch.cat((inputs, features),1)
+            inputs = torch.cat((inputs, features),1)
             hx, cx = self.gru_attention(inputs, hx,cx, features_local)
             hiddens_ctx_tensor[ :, i, :] = torch.cat((hx,cx),1)
 
@@ -467,12 +467,12 @@ class G_Spatial(nn.Module):
         outputs = self.linear(hiddens_ctx_tensor_packed)
         return outputs#, hiddens_tensor
 
-    def _forward_free_cell(self, features, lengths, states):
+    def _forward_free_cell(self, features, lengths, states, adversarial=False):
         output_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.vocab_size))
         hiddens_ctx_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size * 2))
 
-        features, features_local = features
-        inputs = features
+        features_global, features_local = features
+        inputs = features_global
         #onehot = torch.cuda.FloatTensor(features.size(0), self.vocab_size).fill_(0)
         #onehot[:,0] = 1
         #onehot = Variable(onehot, volatile=True)
@@ -482,12 +482,13 @@ class G_Spatial(nn.Module):
         hx, cx = hx[0], cx[0]
 
         for i in range(lengths[0]):
-            #inputs = torch.cat((inputs, features),1)
+            inputs = torch.cat((inputs, features_global),1)
             hx, cx = self.gru_attention(inputs, hx,cx, features_local)
 
             combined = torch.cat((hx,cx), 1)
             outputs = self.linear(combined)
-            outputs = self.gumbel_sample(outputs, tau=0.5)
+            tau = 0.5 if adversarial else 1e-5
+            outputs = self.gumbel_sample(outputs, tau=tau)
             inputs = self.linear2(outputs).view(outputs.size(0), -1)
 
             hiddens_ctx_tensor[ :, i, :] = combined
@@ -507,14 +508,15 @@ class G_Spatial(nn.Module):
         return x.view_as(input)
 
     def beamSearch(self, features, states, n=1, diverse_gamma=0.0):
-        features, features_local = features
+        features_global, features_local = features
 
-        #inputs = Variable(features.data, volatile=True)
-        onehot = torch.cuda.FloatTensor(1, self.vocab_size).fill_(0)
-        onehot[:,0] = 1
-        onehot = Variable(onehot, volatile=True)
-        inputs = self.linear2(onehot)
-        inputs = torch.cat((inputs, features), 1)
+        inputs = Variable(features_global.data, volatile=True)
+
+        # onehot = torch.cuda.FloatTensor(1, self.vocab_size).fill_(0)
+        # onehot[:,0] = 1
+        # onehot = Variable(onehot, volatile=True)
+        # inputs = self.linear2(onehot)
+        inputs = torch.cat((inputs, features_global), 1)
 
         hx, cx = states
         hx, cx = hx[0], cx[0]
@@ -550,12 +552,14 @@ class G_Spatial(nn.Module):
                 onehot = Variable(onehot, volatile=True)
 
                 inputs = self.linear2(onehot)
-                inputs = torch.cat((inputs, features), 1)
+                inputs = torch.cat((inputs, features_global), 1)
 
                 current_confidence = confidences[:,choice_index]
+                out_states, out_context = self.gru_attention(inputs,
+                 cached_states[choice_index], cached_context[choice_index], features_local) # (batch_size, 1, hidden_size)
 
-                out_states, out_context = self.gru_attention(inputs, cached_states[choice_index], cached_context[choice_index], features_local) # (batch_size, 1, hidden_size)
-                outputs = self.log_softmax(self.linear(out_states.squeeze(1)))                       # (batch_size, vocab_size)
+                combined = torch.cat((out_states,out_context), 1)
+                outputs = self.log_softmax(self.linear(combined))                       # (batch_size, vocab_size)
 
                 # pick n best nodes for each possible choice
                 inner_confidences, inner_best_choices = outputs.topk(n)
@@ -564,9 +568,7 @@ class G_Spatial(nn.Module):
                     if word_index != 0:
                         choice = best_choices[choice_index]
                     item = torch.cat((choice, inner_choice))
-
                     position = choice_index * n + rank
-
                     confidence = current_confidence + inner_confidences[rank] - (diverse_gamma * (rank + 1))
 
                     best_list[position]   = item
@@ -586,7 +588,6 @@ class G_Spatial(nn.Module):
             terminated_index   = list(set(topk_index) - set(best_choices_index))
             terminated_choices.extend([ best_list[index] for index in terminated_index ])
             terminated_confidences.extend([ best_confidence_tensor[index].data.cpu().numpy()[0] for index in terminated_index ])
-
 
             ## If there is still nodes to evaluate
             if len(best_choices_index) > 0:

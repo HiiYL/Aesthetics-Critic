@@ -189,7 +189,7 @@ def run(save_path, args):
                 log_value('Loss', mle_loss.data[0], total_iterations)
                 log_value('Perplexity', np.exp(mle_loss.data[0]), total_iterations)
 
-            if (total_iterations+1) % 1 == 0:
+            if (total_iterations+1) % args.save_step == 0:
                 validate(encoder, netG, val_data_loader, val_state, criterion, vocab, total_iterations)
 
             total_iterations += 1
@@ -275,7 +275,7 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
         #     val_json.append(item_json)
 
         # # Print log info
-        if i % args.log_step == 0:
+        if i % args.log_step * 10 == 0:
            print('[%d/%d] - Running model on validation set....'
                  %(i, total_val_step))
 
