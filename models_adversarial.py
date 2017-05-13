@@ -455,9 +455,16 @@ class G_Spatial(nn.Module):
         hiddens_ctx_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size * 2))
         hx, cx = states
         hx, cx = hx[0], cx[0]
+
+        batch_size = features.size(0)
+        if hx.size(0) != batch_size:
+            hx = hx[:batch_size]
+            cx = cx[:batch_size]
+
         for i in range(lengths[0]):
             inputs = embeddings[:,i,:]
             inputs = torch.cat((inputs, features),1)
+
             hx, cx = self.gru_attention(inputs, hx,cx, features_local)
             hiddens_ctx_tensor[ :, i, :] = torch.cat((hx,cx),1)
 
@@ -478,6 +485,11 @@ class G_Spatial(nn.Module):
 
         hx, cx = states
         hx, cx = hx[0], cx[0]
+
+        batch_size = features.size(0)
+        if hx.size(0) != batch_size:
+            hx = hx[:batch_size]
+            cx = cx[:batch_size]
 
         for i in range(lengths[0]):
             inputs = torch.cat((inputs, features_global),1)
