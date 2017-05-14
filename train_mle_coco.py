@@ -99,7 +99,7 @@ def run(save_path, args):
     params = [
                 {'params': netG.parameters()},
                 #{'params': encoder.parameters(), 'lr': 0.1 * args.learning_rate}
-                {'params': encoder.fc.parameters()}
+                #{'params': encoder.fc.parameters()}
                 
             ]
     optimizer = torch.optim.Adam(params, lr=args.learning_rate,betas=(0.8, 0.999))
@@ -129,13 +129,15 @@ def run(save_path, args):
             y_v = Variable(y_onehot)
 
             netG.zero_grad()
-            features_g, features_l = encoder(images)
-            # features_g, features_l = features_g.detach(), features_l.detach()
+            inputs = Variable(images.data, volatile=True)
+            features = Variable(encoder(inputs).data)
+            features_g, features_l = netG.encode_fc(features)
+            #features_g, features_l = features_g.detach(), features_l.detach()
             out = netG((features_g, features_l), y_v, lengths, state, teacher_forced=True)
 
             mle_loss = criterion(out, targets)
             mle_loss.backward()
-            #torch.nn.utils.clip_grad_norm(netG.parameters(), args.grad_clip)
+            torch.nn.utils.clip_grad_norm(netG.parameters(), args.clip)
             optimizer.step()
 
             # Print log info
@@ -331,6 +333,8 @@ if __name__ == '__main__':
                         help='dimension of gru hidden states')
     parser.add_argument('--num_layers', type=int , default=1 ,
                         help='number of layers in gru')
+    parser.add_argument('--clip', type=float, default=0.25,
+                    help='gradient clipping')
     parser.add_argument('--netG', type=str)
     parser.add_argument('--encoder', type=str)
     

@@ -38,8 +38,6 @@ class EncoderCNN(nn.Module):
         for parameters in self.parameters():
             parameters.requires_grad = requires_grad
 
-        self.fc = EncoderFC()
-
     def forward(self, x):
         """Extract the image feature vectors."""
         # 299 x 299 x 3
@@ -84,9 +82,7 @@ class EncoderCNN(nn.Module):
         # 8 x 8 x 2048
         #x = F.dropout(x, training=self.training)
 
-        x_global, x_local = self.fc(x)
-
-        return x_global, x_local
+        return x
 
 class EncoderFC(nn.Module):
     def __init__(self):
@@ -104,7 +100,6 @@ class EncoderFC(nn.Module):
         self.fc_local.bias.data.fill_(0)
 
     def forward(self, x):
-
         x_global = F.avg_pool2d(x, kernel_size=x.size()[2:])[:,:,0,0]
         x_global = self.fc_global(x_global)
         x_global = self.relu(x_global)
@@ -129,8 +124,9 @@ class G_Spatial(nn.Module):
     def __init__(self, embed_size, hidden_size, vocab, num_layers):
         """Set the hyper-parameters and build the layers."""
         super(G_Spatial, self).__init__()
-
+        self.encode_fc = EncoderFC()
         self.vocab = vocab
+
         self.vocab_size = len(vocab)
         self.hidden_size = hidden_size
         self.embed_size = embed_size
@@ -160,7 +156,6 @@ class G_Spatial(nn.Module):
         # for layer in self.fc:
         #     layer.weight.data.uniform_(-0.1, 0.1)
         #     layer.bias.data.fill_(0)
-
         self.fc.weight.data.uniform_(-0.1, 0.1)
         self.fc.bias.data.fill_(0)
 
