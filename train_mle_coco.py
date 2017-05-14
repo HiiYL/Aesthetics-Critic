@@ -15,7 +15,7 @@ import numpy as np
 import os
 from data_loader_coco import get_loader 
 from build_vocab import Vocabulary
-from models_adversarial import EncoderCNN, G,D, InceptionNet, G_Spatial
+from models_spatial import EncoderCNN, G_Spatial
 import pickle
 import datetime
 
@@ -43,14 +43,14 @@ def run(save_path, args):
     
     # Image preprocessing
     train_transform = transforms.Compose([
-        transforms.Scale((598,598)),
+        transforms.Scale((299,299)),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
 
 
     test_transform = transforms.Compose([
-        transforms.Scale((598,598)),
+        transforms.Scale((299,299)),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
@@ -123,7 +123,6 @@ def run(save_path, args):
 
             targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
 
-
             y_onehot.resize_(captions.size(0),captions.size(1),len(vocab))
             y_onehot.zero_()
             y_onehot.scatter_(2,captions.data.unsqueeze(2),1)
@@ -136,7 +135,7 @@ def run(save_path, args):
 
             mle_loss = criterion(out, targets)
             mle_loss.backward()
-            torch.nn.utils.clip_grad_norm(netG.parameters(), args.clip)
+            #torch.nn.utils.clip_grad_norm(netG.parameters(), args.grad_clip)
             optimizer.step()
 
             # Print log info
@@ -310,7 +309,7 @@ if __name__ == '__main__':
     parser.add_argument('--model_path', type=str, default='./models/' ,
                         help='path for saving trained models')
     parser.add_argument('--crop_size', type=int, default=299 ,
-                        help='size for randomly cropping images')
+                        help='image size to use')
     parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
                         help='path for vocabulary wrapper')
     parser.add_argument('--dataset', type=str, default='coco' ,
@@ -337,10 +336,10 @@ if __name__ == '__main__':
 
     
     parser.add_argument('--num_epochs', type=int, default=500)
-    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--batch_size', type=int, default=20)
     parser.add_argument('--num_workers', type=int, default=2)
-    parser.add_argument('--learning_rate', type=float, default=5e-4)
-    parser.add_argument('--clip', type=float, default=0.25,help='gradient clipping')
+    parser.add_argument('--learning_rate', type=float, default=4e-4)
+    parser.add_argument('--clip', type=float, default=5.0,help='gradient clipping')
     args = parser.parse_args()
     print(args)
 
