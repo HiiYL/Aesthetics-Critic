@@ -71,7 +71,7 @@ def run(save_path, args):
     netG = G_Spatial(args.embed_size, args.hidden_size, vocab, args.num_layers)
 
     if args.netG:
-        print("[!]loading pretrained model....")
+        print("[!]loading pretrained netG....")
         netG.load_state_dict(torch.load(args.netG))
         print("Done!")
 
@@ -130,7 +130,7 @@ def run(save_path, args):
 
             netG.zero_grad()
             features_g, features_l = encoder(images)
-            features_g, features_l = features_g.detach(), features_l.detach()
+            # features_g, features_l = features_g.detach(), features_l.detach()
             out = netG((features_g, features_l), y_v, lengths, state, teacher_forced=True)
 
             mle_loss = criterion(out, targets)
@@ -143,36 +143,36 @@ def run(save_path, args):
                 print('Epoch [%d/%d], Step [%d/%d] Loss: %5.4f, Perplexity: %5.4f'
                       %(epoch, args.num_epochs, i, total_step,  mle_loss.data[0], np.exp(mle_loss.data[0]))) 
 
-            # if total_iterations % 100 == 0:
-            #     print("")
-            #     outputs_free,_  = netG((features_g, features_l), y_v, lengths, state, teacher_forced=False)
+            if total_iterations % 100 == 0:
+                print("")
+                outputs_free,_  = netG((features_g, features_l), y_v, lengths, state, teacher_forced=False)
 
-            #     sampled_ids_free = torch.max(outputs_free,1)[1].squeeze()
-            #     sampled_ids_free = pad_packed_sequence([sampled_ids_free, batch_sizes], batch_first=True)[0]
-            #     sampled_ids_free = sampled_ids_free.cpu().data.numpy()
+                sampled_ids_free = torch.max(outputs_free,1)[1].squeeze()
+                sampled_ids_free = pad_packed_sequence([sampled_ids_free, batch_sizes], batch_first=True)[0]
+                sampled_ids_free = sampled_ids_free.cpu().data.numpy()
 
-            #     def word_idx_to_sentence(sample):
-            #         sampled_caption = []
-            #         for word_id in sample:
-            #             word = vocab.idx2word[word_id]
-            #             sampled_caption.append(word)
-            #             if word == '<end>':
-            #                 break
-            #         return ' '.join(sampled_caption)
+                def word_idx_to_sentence(sample):
+                    sampled_caption = []
+                    for word_id in sample:
+                        word = vocab.idx2word[word_id]
+                        sampled_caption.append(word)
+                        if word == '<end>':
+                            break
+                    return ' '.join(sampled_caption)
 
-            #     groundtruth_caption = captions.cpu().data.numpy()
-            #     sampled_captions = ""
-            #     for i, comment in enumerate(sampled_ids_free):
-            #         if i > 1:
-            #             break
+                groundtruth_caption = captions.cpu().data.numpy()
+                sampled_captions = ""
+                for i, comment in enumerate(sampled_ids_free):
+                    if i > 1:
+                        break
 
-            #         sampled_caption   = word_idx_to_sentence(groundtruth_caption[i])
-            #         sampled_captions += "[G]{} \n".format(sampled_caption)
+                    sampled_caption   = word_idx_to_sentence(groundtruth_caption[i])
+                    sampled_captions += "[G]{} \n".format(sampled_caption)
 
-            #         sampled_caption =  word_idx_to_sentence(comment)
-            #         sampled_captions += "[F]{} \n".format(sampled_caption)
+                    sampled_caption =  word_idx_to_sentence(comment)
+                    sampled_captions += "[F]{} \n".format(sampled_caption)
 
-            #     print(sampled_captions)
+                print(sampled_captions)
 
             # Save the model
             if (total_iterations+1) % args.save_step == 0:
@@ -331,15 +331,13 @@ if __name__ == '__main__':
                         help='dimension of gru hidden states')
     parser.add_argument('--num_layers', type=int , default=1 ,
                         help='number of layers in gru')
-    parser.add_argument('--netG', type=str)#, default='-2-20000.pkl')
+    parser.add_argument('--netG', type=str)
     parser.add_argument('--encoder', type=str)
-
     
     parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=20)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--learning_rate', type=float, default=4e-4)
-    parser.add_argument('--clip', type=float, default=5.0,help='gradient clipping')
     args = parser.parse_args()
     print(args)
 

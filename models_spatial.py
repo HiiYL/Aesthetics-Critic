@@ -73,8 +73,8 @@ class EncoderCNN(nn.Module):
         # 17 x 17 x 768
         x = self.Mixed_6e(x)
         # 17 x 17 x 768
-        if self.training and self.aux_logits:
-            aux = self.AuxLogits(x)
+        # if self.training and self.aux_logits:
+        #     aux = self.AuxLogits(x)
         # 17 x 17 x 768
         x = self.Mixed_7a(x)
         # 8 x 8 x 1280
@@ -104,26 +104,23 @@ class EncoderFC(nn.Module):
         self.fc_local.bias.data.fill_(0)
 
     def forward(self, x):
-        x_global = F.avg_pool2d(x, kernel_size=x.size()[2:]).squeeze(2).squeeze(2)
 
-        # batch x 2048 x 8 x 8 -> batch x 8 x 8 x 2048
-        x = x.permute(0,2,3,1).contiguous()
-
-        # batch x 8 x 8 x 2048 -> batch * 64 x 2048
-        batch, im_size_w , im_size_h , depth = x.size()
-        x = x.view( -1 , depth)
-
-        # batch * 64 x 2048 -> batch * 64 x 512
-        x = self.fc_local(x)
-
-        # batch * 64 x 512 -> batch x 64 x 512
-        x_local  = x.view(batch, im_size_w * im_size_h, -1)
-        x_local  = self.relu(x_local)
-        x_local  = self.dropout(x_local)
-
+        x_global = F.avg_pool2d(x, kernel_size=x.size()[2:])[:,:,0,0]
         x_global = self.fc_global(x_global)
         x_global = self.relu(x_global)
-        x_global =  self.dropout(x_global)
+        x_global = self.dropout(x_global)
+
+        # batch x 2048 x 8 x 8 -> batch x 8 x 8 x 2048
+        x_local = x.permute(0,2,3,1).contiguous()
+        # batch x 8 x 8 x 2048 -> batch * 64 x 2048
+        batch, im_size_w , im_size_h , depth = x_local.size()
+        x_local = x_local.view( -1 , depth)
+        # batch * 64 x 2048 -> batch * 64 x 512
+        x_local = self.fc_local(x_local)
+        # batch * 64 x 512 -> batch x 64 x 512
+        x_local  = x_local.view(batch, im_size_w * im_size_h, -1)
+        x_local  = self.relu(x_local)
+        x_local = self.dropout(x_local)
 
         return x_global, x_local
 
@@ -136,17 +133,22 @@ class G_Spatial(nn.Module):
         self.vocab = vocab
         self.vocab_size = len(vocab)
         self.hidden_size = hidden_size
+        self.embed_size = embed_size
 
-        self.fc = nn.Sequential(
-            nn.Linear(hidden_size * 2, hidden_size * 2),
-            nn.Linear(hidden_size * 2, hidden_size * 2),
-            nn.Linear(hidden_size * 2, self.vocab_size)
-        )
-        self.linear2 = nn.Linear(self.vocab_size, embed_size)
+        # self.fc = nn.Sequential(
+        #     nn.Linear(hidden_size * 2, hidden_size * 2),
+        #     nn.BatchNorm1d(hidden_size * 2),
+        #     nn.Dropout(),
+        #     nn.Linear(hidden_size * 2, hidden_size * 2),
+        #     nn.BatchNorm1d(hidden_size * 2),
+        #     nn.Linear(hidden_size * 2, self.vocab_size)
+        # )
+        self.fc = nn.Linear(hidden_size * 2, self.vocab_size)
+        self.embed = nn.Linear(self.vocab_size, embed_size)
         self.v2h = nn.Linear(embed_size * 2, embed_size)
 
-        self.lstm_cell   = nn.LSTMCell(embed_size, hidden_size)
-        self.attn = nn.Linear( hidden_size * 2, 64)
+        self.lstm_cell = nn.LSTMCell(embed_size, hidden_size)
+        self.attn = nn.Linear( hidden_size, 64)
 
         self.log_softmax = nn.LogSoftmax()
         self.dropout = nn.Dropout()
@@ -155,12 +157,15 @@ class G_Spatial(nn.Module):
     
     def init_weights(self):
         """Initialize weights."""
-        for layer in self.fc:
-            layer.weight.data.uniform_(-0.1, 0.1)
-            layer.bias.data.fill_(0)
+        # for layer in self.fc:
+        #     layer.weight.data.uniform_(-0.1, 0.1)
+        #     layer.bias.data.fill_(0)
 
-        self.linear2.weight.data.uniform_(-0.1, 0.1)
-        self.linear2.bias.data.fill_(0)
+        self.fc.weight.data.uniform_(-0.1, 0.1)
+        self.fc.bias.data.fill_(0)
+
+        self.embed.weight.data.uniform_(-0.1, 0.1)
+        self.embed.bias.data.fill_(0)
 
         self.v2h.weight.data.uniform_(-0.1, 0.1)
         self.v2h.bias.data.fill_(0)
@@ -170,11 +175,12 @@ class G_Spatial(nn.Module):
 
 
     def lstm_attention(self, inputs, hx,cx, features):
-        inputs = self.dropout(self.v2h(inputs))
+        inputs = self.v2h(inputs)
+        #inputs = self.dropout(inputs)
         hx, cx = self.lstm_cell(inputs, (hx,cx))
         hx, cx = self.dropout(hx), self.dropout(cx)
 
-        attn_weights = F.softmax(self.attn(torch.cat((hx,cx),1)))
+        attn_weights = F.softmax(self.attn(hx))
         cx = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
         return hx, cx
 
@@ -187,36 +193,36 @@ class G_Spatial(nn.Module):
             return self._forward_free_cell(features, lengths, state)
 
     def _forward_forced_cell(self, features, captions, lengths, states):
-        features, features_local = features
+        features_global, features_local = features
         if isinstance(captions, tuple):
             captions, batch_sizes = captions
-            embeddings = self.linear2(captions)
+            embeddings = self.embed(captions)
             embeddings = pad_packed_sequence((embeddings,batch_sizes), batch_first=True)[0]
         else:
             batch_size, caption_length, _ = captions.size()
             captions = captions.view(-1,self.vocab_size)
-            embeddings = self.linear2(captions)
+            embeddings = self.embed(captions)
             embeddings = embeddings.view(batch_size, caption_length, -1)
 
-        embeddings = torch.cat((features.unsqueeze(1), embeddings), 1)
+        embeddings = torch.cat((features_global.unsqueeze(1), embeddings), 1)
         hiddens_ctx_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size * 2))
         hx, cx = states
         hx, cx = hx[0], cx[0]
 
-        batch_size = features.size(0)
+        batch_size = features_global.size(0)
         if hx.size(0) != batch_size:
             hx = hx[:batch_size]
             cx = cx[:batch_size]
 
         for i in range(lengths[0]):
             inputs = embeddings[:,i,:]
-            inputs = torch.cat((inputs, features),1)
+            inputs = torch.cat((inputs, features_global),1)
 
             hx, cx = self.lstm_attention(inputs, hx,cx, features_local)
             hiddens_ctx_tensor[ :, i, :] = torch.cat((hx,cx),1)
 
         hiddens_ctx_tensor_packed, _ = pack_padded_sequence(hiddens_ctx_tensor, lengths, batch_first=True)
-        outputs = self.dropout(self.fc(hiddens_ctx_tensor_packed))
+        outputs = self.fc(hiddens_ctx_tensor_packed)
         return outputs#, hiddens_tensor
 
     def _forward_free_cell(self, features, lengths, states, adversarial=False):
@@ -228,12 +234,12 @@ class G_Spatial(nn.Module):
         #onehot = torch.cuda.FloatTensor(features.size(0), self.vocab_size).fill_(0)
         #onehot[:,0] = 1
         #onehot = Variable(onehot, volatile=True)
-        #inputs = self.linear2(onehot)
+        #inputs = self.embed(onehot)
 
         hx, cx = states
         hx, cx = hx[0], cx[0]
 
-        batch_size = features.size(0)
+        batch_size = features_global.size(0)
         if hx.size(0) != batch_size:
             hx = hx[:batch_size]
             cx = cx[:batch_size]
@@ -246,7 +252,7 @@ class G_Spatial(nn.Module):
             outputs = self.fc(combined)
             tau = 0.5 if adversarial else 1e-5
             outputs = self.gumbel_sample(outputs, tau=tau)
-            inputs = self.linear2(outputs).view(outputs.size(0), -1)
+            inputs = self.embed(outputs).view(outputs.size(0), -1)
 
             hiddens_ctx_tensor[ :, i, :] = combined
             output_tensor [:,i,:] = outputs
@@ -266,13 +272,12 @@ class G_Spatial(nn.Module):
 
     def beamSearch(self, features, states, n=1, diverse_gamma=0.0):
         features_global, features_local = features
-
         inputs = Variable(features_global.data, volatile=True)
 
         # onehot = torch.cuda.FloatTensor(1, self.vocab_size).fill_(0)
         # onehot[:,0] = 1
         # onehot = Variable(onehot, volatile=True)
-        # inputs = self.linear2(onehot)
+        # inputs = self.embed(onehot)
         inputs = torch.cat((inputs, features_global), 1)
 
         hx, cx = states
@@ -308,7 +313,7 @@ class G_Spatial(nn.Module):
                 onehot[0][input_choice.data] = 1
                 onehot = Variable(onehot, volatile=True)
 
-                inputs = self.linear2(onehot)
+                inputs = self.embed(onehot)
                 inputs = torch.cat((inputs, features_global), 1)
 
                 current_confidence = confidences[:,choice_index]
