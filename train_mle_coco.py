@@ -233,9 +233,8 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
         targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
 
         # Forward, Backward and Optimize
-        features_g, features_l = encoder(images)
-        features_g = Variable(features_g.detach().data, volatile=True)
-        features_l = Variable(features_l.detach().data, volatile=True)
+        features = encoder(images)
+        features_g, features_l = netG.encode_fc(features)
 
         sampled_ids_list, terminated_confidences = netG.beamSearch((features_g, features_l), state, n=3, diverse_gamma=0.0)
         sampled_ids_list = np.array([ sampled_ids.cpu().data.numpy() for sampled_ids in sampled_ids_list ])
@@ -335,8 +334,8 @@ if __name__ == '__main__':
                         help='number of layers in gru')
     parser.add_argument('--clip', type=float, default=0.25,
                     help='gradient clipping')
-    parser.add_argument('--netG', type=str)
-    parser.add_argument('--encoder', type=str)
+    parser.add_argument('--netG', type=str, default="logs/coco/14052017174557/netG-1-10000.pkl")
+    parser.add_argument('--encoder', type=str, default="logs/coco/14052017174557/encoder-1-10000.pkl")
     
     parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=20)
@@ -344,7 +343,6 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate', type=float, default=4e-4)
     args = parser.parse_args()
     print(args)
-
     if not os.path.exists("logs"):
         os.mkdir("logs")
 
