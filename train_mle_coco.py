@@ -133,10 +133,8 @@ def run(save_path, args):
             y_v = Variable(y_onehot)
 
             netG.zero_grad()
-            if finetune:
-                inputs = images
-            else:
-                inputs = Variable(images.data, volatile=True)
+            inputs = images if finetune else Variable(images.data, volatile=True)
+
             features = Variable(encoder(inputs).data)
             features_g, features_l = netG.encode_fc(features)
             out = netG((features_g, features_l), y_v, lengths, state, teacher_forced=True)
@@ -151,39 +149,39 @@ def run(save_path, args):
                 print('Epoch [%d/%d], Step [%d/%d] Loss: %5.4f, Perplexity: %5.4f'
                       %(epoch, args.num_epochs, i, total_step,  mle_loss.data[0], np.exp(mle_loss.data[0]))) 
 
-            # if total_iterations % 1000 == 0:
-            #     netG.eval()
-            #     print("")
-            #     eval_input = (Variable(features_g.data, volatile=True), Variable(features_l.data, volatile=True))
-            #     outputs_free,_  = netG(eval_input, y_v, lengths, state, teacher_forced=False)
+            if total_iterations % 100 == 0:
+                netG.eval()
+                print("")
+                eval_input = (Variable(features_g.data, volatile=True), Variable(features_l.data, volatile=True))
+                outputs_free = netG(eval_input, y_v, lengths, state, teacher_forced=False)
 
-            #     sampled_ids_free = torch.max(outputs_free,1)[1].squeeze()
-            #     sampled_ids_free = pad_packed_sequence([sampled_ids_free, batch_sizes], batch_first=True)[0]
-            #     sampled_ids_free = sampled_ids_free.cpu().data.numpy()
+                sampled_ids_free = torch.max(outputs_free,1)[1].squeeze()
+                sampled_ids_free = pad_packed_sequence([sampled_ids_free, batch_sizes], batch_first=True)[0]
+                sampled_ids_free = sampled_ids_free.cpu().data.numpy()
 
-            #     def word_idx_to_sentence(sample):
-            #         sampled_caption = []
-            #         for word_id in sample:
-            #             word = vocab.idx2word[word_id]
-            #             sampled_caption.append(word)
-            #             if word == '<end>':
-            #                 break
-            #         return ' '.join(sampled_caption)
+                def word_idx_to_sentence(sample):
+                    sampled_caption = []
+                    for word_id in sample:
+                        word = vocab.idx2word[word_id]
+                        sampled_caption.append(word)
+                        if word == '<end>':
+                            break
+                    return ' '.join(sampled_caption)
 
-            #     groundtruth_caption = captions.cpu().data.numpy()
-            #     sampled_captions = ""
-            #     for i, comment in enumerate(sampled_ids_free):
-            #         if i > 1:
-            #             break
+                groundtruth_caption = captions.cpu().data.numpy()
+                sampled_captions = ""
+                for i, comment in enumerate(sampled_ids_free):
+                    if i > 1:
+                        break
 
-            #         sampled_caption   = word_idx_to_sentence(groundtruth_caption[i])
-            #         sampled_captions += "[G]{} \n".format(sampled_caption)
+                    sampled_caption   = word_idx_to_sentence(groundtruth_caption[i])
+                    sampled_captions += "[G]{} \n".format(sampled_caption)
 
-            #         sampled_caption =  word_idx_to_sentence(comment)
-            #         sampled_captions += "[F]{} \n".format(sampled_caption)
+                    sampled_caption =  word_idx_to_sentence(comment)
+                    sampled_captions += "[F]{} \n".format(sampled_caption)
 
-            #     print(sampled_captions)
-            #     netG.train()
+                print(sampled_captions)
+                netG.train()
 
             # Save the model
             if (total_iterations+1) % args.save_step == 0:
@@ -255,7 +253,7 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
         sampled_caption = []
         for word_id in sampled_ids:
             word = vocab.idx2word[word_id]
-            if word == '<end>' or word == '<pad>':
+            if word in ['<end', '<pad>']:
                 break
             if word != '<start>':
                 sampled_caption.append(word)
@@ -305,7 +303,6 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
 
     for metric, score in cocoEval.eval.items():
         log_value(metric, score, total_iterations)
-        print '%s: %.3f'%(metric, score)
 
     netG.train()
     encoder.train()
@@ -331,7 +328,7 @@ if __name__ == '__main__':
                         help='step size for prining log info')
     parser.add_argument('--tb_log_step', type=int , default=100,
                         help='step size for prining log info')
-    parser.add_argument('--save_step', type=int , default=10000,
+    parser.add_argument('--save_step', type=int , default=8856,
                         help='step size for saving trained models')
     
     # Model parameters
@@ -347,7 +344,7 @@ if __name__ == '__main__':
     parser.add_argument('--encoder', type=str)
     
     parser.add_argument('--num_epochs', type=int, default=500)
-    parser.add_argument('--batch_size', type=int, default=20)
+    parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--learning_rate', type=float, default=4e-4)
     parser.add_argument('--finetune', action='store_true')
