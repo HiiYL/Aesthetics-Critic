@@ -130,8 +130,10 @@ def run(save_path, args):
             y_v = Variable(y_onehot)
 
             netG.zero_grad()
-            volatile = !finetune
-            inputs = Variable(images.data, volatile=volatile)
+            if finetune:
+                inputs = images
+            else:
+                inputs = Variable(images.data, volatile=True)
             features = Variable(encoder(inputs).data)
             features_g, features_l = netG.encode_fc(features)
             #features_g, features_l = features_g.detach(), features_l.detach()
