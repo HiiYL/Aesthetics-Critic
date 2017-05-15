@@ -185,7 +185,7 @@ class G_Spatial(nn.Module):
         inputs = self.v2h(inputs)
         hx, cx = self.lstm_cell(inputs, (hx,cx))
         attn_weights = F.softmax(self.attn(hx))
-        cx = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
+        visual_cx = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
         # skip connection
         cx = cx + visual_cx
         return hx, cx
