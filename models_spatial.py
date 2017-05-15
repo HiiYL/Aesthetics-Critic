@@ -87,7 +87,7 @@ class EncoderFC(nn.Module):
         super(EncoderFC, self).__init__()
         self.fc_global = nn.Sequential(
             nn.Linear(2048, 512),
-            #nn.BatchNorm1d(512),
+            nn.BatchNorm1d(512),
             nn.ReLU(),
             nn.Dropout()
         )
@@ -95,7 +95,7 @@ class EncoderFC(nn.Module):
 
         self.fc_local  = nn.Sequential(
             nn.Linear(2048, 512),
-            #nn.BatchNorm1d(512),
+            nn.BatchNorm1d(512),
             nn.ReLU(),
             nn.Dropout()
         )
@@ -147,22 +147,20 @@ class G_Spatial(nn.Module):
         self.start_idx = self.vocab('<start>')
         self.end_idx   = self.vocab('<end>')
 
-        # self.fc = nn.Sequential(
-        #     nn.Linear(hidden_size * 2, hidden_size * 2),
-        #     nn.ReLU(),
-        #     nn.Dropout(),
-        #     nn.Linear(hidden_size * 2, hidden_size * 2),
-        #     nn.ReLU(),
-        #     nn.Dropout(),
-        #     nn.Linear(hidden_size * 2, self.vocab_size)
-        # )
-        self.fc = nn.Linear(hidden_size * 2, self.vocab_size)
+        self.fc = nn.Sequential(
+            nn.Linear(hidden_size * 2, hidden_size * 2),
+            nn.ReLU(),
+            nn.Dropout(),
+            nn.Linear(hidden_size * 2, hidden_size * 2),
+            nn.ReLU(),
+            nn.Dropout(),
+            nn.Linear(hidden_size * 2, self.vocab_size)
+        )
         self.embed = nn.Linear(self.vocab_size, embed_size)
         self.v2h = nn.Linear(embed_size * 2, embed_size)
 
         self.lstm_cell = nn.LSTMCell(embed_size, hidden_size)
         self.attn = nn.Linear( hidden_size, attn_size)
-        #self.attn_cx = nn.Linear( hidden_size, attn_size)
 
         self.log_softmax = nn.LogSoftmax()
         self.dropout = nn.Dropout()
@@ -210,9 +208,7 @@ class G_Spatial(nn.Module):
             return self._forward_free_cell(features, lengths, state)
 
     def _forward_forced_cell(self, features, captions, lengths, states):
-
         features_global, features_local = features
-        
         if isinstance(captions, tuple):
             captions, batch_sizes = captions
             embeddings = self.embed(captions)
@@ -224,7 +220,6 @@ class G_Spatial(nn.Module):
             embeddings = embeddings.view(batch_size, caption_length, -1)
 
         if self.image_first:
-            ## Add start token back !!
             embeddings = torch.cat((features_global.unsqueeze(1), embeddings), 1)
         else:
             onehot = torch.cuda.FloatTensor(features_global.size(0), self.vocab_size).fill_(0)

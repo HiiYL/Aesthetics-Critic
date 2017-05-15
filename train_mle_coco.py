@@ -79,7 +79,7 @@ def run(save_path, args):
     finetune = args.finetune
     # Build the models
     encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True), requires_grad=finetune)
-    netG = G_Spatial(args.embed_size, args.hidden_size, vocab, args.num_layers, attn_size=64)
+    netG = G_Spatial(args.embed_size, args.hidden_size, vocab, args.num_layers, attn_size=289)
 
     if args.netG:
         print("[!]loading pretrained netG....")
@@ -342,7 +342,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_path', type=str, default='./models/' ,
                         help='path for saving trained models')
-    parser.add_argument('--image_size', type=int, default=299 ,
+    parser.add_argument('--image_size', type=int, default=598 ,
                         help='image size to use')
     parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
                         help='path for vocabulary wrapper')
@@ -376,7 +376,7 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate', type=float, default=4e-4)
     parser.add_argument('--finetune', action='store_true')
     parser.add_argument('--description', help="a small description describing what the experiment is about", default="")
-    parser.add_argument('--beam', type=int, default=1)
+    parser.add_argument('--beam', type=int, default=3)
     args = parser.parse_args()
     print(args)
     if not os.path.exists("logs"):
