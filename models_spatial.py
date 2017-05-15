@@ -185,8 +185,6 @@ class G_Spatial(nn.Module):
             elif isinstance(m, nn.Linear):
                 kaiming_uniform(m.weight.data)
                 m.bias.data.zero_()
-                
-
 
     def lstm_attention(self, inputs, hx,cx, features):
         inputs = self.v2h(inputs)
@@ -196,12 +194,12 @@ class G_Spatial(nn.Module):
         # cross attention
         attn_weights = F.softmax(self.attn(hx))
         #attn_weights_cx = F.softmax(self.attn_cx(cx))
-        cx = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
+        visual_cx = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
         #visual_hx = torch.bmm(attn_weights_cx.unsqueeze(1), features).squeeze(1)
 
         # skip connection
         #hx = hx + visual_hx
-        #cx = cx + visual_cx
+        cx = cx + visual_cx
 
 
         return hx, cx

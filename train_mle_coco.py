@@ -44,6 +44,7 @@ def run(save_path, args):
     # Image preprocessing
     train_transform = transforms.Compose([
         transforms.Scale((args.image_size,args.image_size)),
+        transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
@@ -51,6 +52,7 @@ def run(save_path, args):
 
     test_transform = transforms.Compose([
         transforms.Scale((args.image_size,args.image_size)),
+        transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
@@ -149,9 +151,11 @@ def run(save_path, args):
                 print('Epoch [%d/%d], Step [%d/%d] Loss: %5.4f, Perplexity: %5.4f'
                       %(epoch, args.num_epochs, i, total_step,  mle_loss.data[0], np.exp(mle_loss.data[0]))) 
 
-            # if total_iterations % 100 == 0:
+            # if total_iterations % 1000 == 0:
+            #     netG.eval()
             #     print("")
-            #     outputs_free,_  = netG((features_g, features_l), y_v, lengths, state, teacher_forced=False)
+            #     eval_input = (Variable(features_g.data, volatile=True), Variable(features_l.data, volatile=True))
+            #     outputs_free,_  = netG(eval_input, y_v, lengths, state, teacher_forced=False)
 
             #     sampled_ids_free = torch.max(outputs_free,1)[1].squeeze()
             #     sampled_ids_free = pad_packed_sequence([sampled_ids_free, batch_sizes], batch_first=True)[0]
@@ -179,6 +183,7 @@ def run(save_path, args):
             #         sampled_captions += "[F]{} \n".format(sampled_caption)
 
             #     print(sampled_captions)
+            #     netG.train()
 
             # Save the model
             if (total_iterations+1) % args.save_step == 0:
@@ -234,7 +239,7 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
         if torch.cuda.is_available():
             images = images.cuda()
             captions = captions.cuda()
-        targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
+        # targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
 
         # Forward, Backward and Optimize
         features = encoder(images)
@@ -346,6 +351,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--learning_rate', type=float, default=4e-4)
     parser.add_argument('--finetune', action='store_true')
+    parser.add_argument('--description', help="a small description describing what the experiment is about", default="")
     args = parser.parse_args()
     print(args)
     if not os.path.exists("logs"):
@@ -355,7 +361,11 @@ if __name__ == '__main__':
         os.mkdir(os.path.join("logs", args.dataset))
 
     now = datetime.datetime.now().strftime('%d%m%Y%H%M%S')
-    save_path = os.path.join(os.path.join("logs", args.dataset), now)
+    if args.description != "":
+        folder_name = "{}_{}".format(now, args.description)
+    else:
+        folder_name = now
+    save_path = os.path.join(os.path.join("logs", args.dataset), folder_name)
 
     if not os.path.exists(save_path):
         os.mkdir(save_path)
