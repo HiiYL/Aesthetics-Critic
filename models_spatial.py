@@ -90,7 +90,7 @@ class EncoderFC(nn.Module):
         super(EncoderFC, self).__init__()
         self.fc_global = nn.Sequential(
             nn.Linear(2048, 512),
-            nn.BatchNorm1d(512),
+           #nn.BatchNorm1d(512),
             nn.ReLU(),
             nn.Dropout()
         )
@@ -98,7 +98,7 @@ class EncoderFC(nn.Module):
 
         self.fc_local  = nn.Sequential(
             nn.Linear(2048, 512),
-            nn.BatchNorm1d(512),
+            #nn.BatchNorm1d(512),
             nn.ReLU(),
             nn.Dropout()
         )
@@ -148,18 +148,18 @@ class G_Spatial(nn.Module):
         self.hidden_size = hidden_size
         self.embed_size = embed_size
 
-        self.fc = nn.Sequential(
-            nn.Linear(hidden_size * 2, hidden_size * 2),
-            nn.BatchNorm1d(hidden_size * 2),
-            nn.ReLU(),
-            nn.Dropout(),
-            nn.Linear(hidden_size * 2, hidden_size * 2),
-            nn.BatchNorm1d(hidden_size * 2),
-            nn.ReLU(),
-            nn.Dropout(),
-            nn.Linear(hidden_size * 2, self.vocab_size)
-        )
-        #self.fc = nn.Linear(hidden_size * 2, self.vocab_size)
+        # self.fc = nn.Sequential(
+        #     nn.Linear(hidden_size * 2, hidden_size * 2),
+        #     nn.BatchNorm1d(hidden_size * 2),
+        #     nn.ReLU(),
+        #     nn.Dropout(),
+        #     nn.Linear(hidden_size * 2, hidden_size * 2),
+        #     nn.BatchNorm1d(hidden_size * 2),
+        #     nn.ReLU(),
+        #     nn.Dropout(),
+        #     nn.Linear(hidden_size * 2, self.vocab_size)
+        # )
+        self.fc = nn.Linear(hidden_size * 2, self.vocab_size)
         self.embed = nn.Linear(self.vocab_size, embed_size)
         self.v2h = nn.Linear(embed_size * 2, embed_size)
 
@@ -194,14 +194,14 @@ class G_Spatial(nn.Module):
         #hx, cx = self.dropout(hx), self.dropout(cx)
 
         # cross attention
-        attn_weights_hx = F.softmax(self.attn(hx))
+        attn_weights = F.softmax(self.attn(hx))
         #attn_weights_cx = F.softmax(self.attn_cx(cx))
-        attn_cx = torch.bmm(attn_weights_hx.unsqueeze(1), features).squeeze(1)
+        cx = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
         #visual_hx = torch.bmm(attn_weights_cx.unsqueeze(1), features).squeeze(1)
 
         # skip connection
         #hx = hx + visual_hx
-        cx = attn_cx #cx + visual_cx
+        #cx = cx + visual_cx
 
 
         return hx, cx
