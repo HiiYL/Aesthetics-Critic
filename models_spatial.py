@@ -157,16 +157,16 @@ class G_Spatial(nn.Module):
         self.start_idx = self.vocab('<start>')
         self.end_idx   = self.vocab('<end>')
 
-        self.fc = nn.Sequential(
-            nn.Linear(hidden_size * 2, hidden_size * 2),
-            nn.ReLU(),
-            nn.Dropout(),
-            nn.Linear(hidden_size * 2, hidden_size * 2),
-            nn.ReLU(),
-            nn.Dropout(),
-            nn.Linear(hidden_size * 2, self.vocab_size)
-        )
-        #self.fc = nn.Linear(hidden_size * 2, self.vocab_size)
+        # self.fc = nn.Sequential(
+        #     nn.Linear(hidden_size * 2, hidden_size * 2),
+        #     nn.ReLU(),
+        #     nn.Dropout(),
+        #     nn.Linear(hidden_size * 2, hidden_size * 2),
+        #     nn.ReLU(),
+        #     nn.Dropout(),
+        #     nn.Linear(hidden_size * 2, self.vocab_size)
+        # )
+        self.fc = nn.Linear(hidden_size * 2, self.vocab_size)
         self.embed = nn.Linear(self.vocab_size, embed_size)
         self.v2h = nn.Linear(embed_size * 2, embed_size)
 
@@ -198,10 +198,10 @@ class G_Spatial(nn.Module):
         hx, cx = self.lstm_cell(inputs, (hx,cx))
 
         attn_weights = F.softmax(self.attn(hx))
-        visual_cx = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
+        cx = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
 
         # skip connection
-        cx = cx + visual_cx
+        #cx = cx + visual_cx
         return hx, cx
 
          
