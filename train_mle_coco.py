@@ -43,14 +43,14 @@ def run(save_path, args):
     
     # Image preprocessing
     train_transform = transforms.Compose([
-        transforms.Scale((598,598)),
+        transforms.Scale((args.image_size,args.image_size)),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
 
 
     test_transform = transforms.Compose([
-        transforms.Scale((598,598)),
+        transforms.Scale((args.image_size,args.image_size)),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
@@ -68,7 +68,7 @@ def run(save_path, args):
 
     # Build the models
     encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True), requires_grad=False)
-    netG = G_Spatial(args.embed_size, args.hidden_size, vocab, args.num_layers)
+    netG = G_Spatial(args.embed_size, args.hidden_size, vocab, args.num_layers, attn_size=64)
 
     if args.netG:
         print("[!]loading pretrained netG....")
@@ -309,7 +309,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_path', type=str, default='./models/' ,
                         help='path for saving trained models')
-    parser.add_argument('--crop_size', type=int, default=299 ,
+    parser.add_argument('--image_size', type=int, default=299 ,
                         help='image size to use')
     parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
                         help='path for vocabulary wrapper')

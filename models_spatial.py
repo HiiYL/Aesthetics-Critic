@@ -87,12 +87,19 @@ class EncoderCNN(nn.Module):
 class EncoderFC(nn.Module):
     def __init__(self):
         super(EncoderFC, self).__init__()
-        self.fc_global = nn.Linear(2048, 512)
-        self.fc_local  = nn.Linear(2048, 512)
+        self.fc_global = nn.Sequential(
+            nn.Linear(2048, 512),
+            nn.ReLU(),
+            nn.Dropout()
+        )
 
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout()
 
+        self.fc_local  = nn.Sequential(
+            nn.Linear(2048, 512),
+            nn.ReLU(),
+            nn.Dropout()
+        )
+        
         self._initialize_weights()
 
     def _initialize_weights(self):
@@ -113,8 +120,6 @@ class EncoderFC(nn.Module):
     def forward(self, x):
         x_global = F.avg_pool2d(x, kernel_size=x.size()[2:])[:,:,0,0]
         x_global = self.fc_global(x_global)
-        x_global = self.relu(x_global)
-        x_global = self.dropout(x_global)
 
         # batch x 2048 x 8 x 8 -> batch x 8 x 8 x 2048
         x_local = x.permute(0,2,3,1).contiguous()
@@ -125,14 +130,12 @@ class EncoderFC(nn.Module):
         x_local = self.fc_local(x_local)
         # batch * 64 x 512 -> batch x 64 x 512
         x_local  = x_local.view(batch, im_size_w * im_size_h, -1)
-        x_local  = self.relu(x_local)
-        x_local = self.dropout(x_local)
 
         return x_global, x_local
 
 
 class G_Spatial(nn.Module):
-    def __init__(self, embed_size, hidden_size, vocab, num_layers):
+    def __init__(self, embed_size, hidden_size, vocab, num_layers, attn_size):
         """Set the hyper-parameters and build the layers."""
         super(G_Spatial, self).__init__()
         self.encode_fc = EncoderFC()
@@ -144,10 +147,10 @@ class G_Spatial(nn.Module):
 
         self.fc = nn.Sequential(
             nn.Linear(hidden_size * 2, 4096),
-            nn.ReLU(True),
+            nn.ReLU(),
             nn.Dropout(),
             nn.Linear(4096, 4096),
-            nn.ReLU(True),
+            nn.ReLU(),
             nn.Dropout(),
             nn.Linear(4096, self.vocab_size)
         )
@@ -156,7 +159,7 @@ class G_Spatial(nn.Module):
         self.v2h = nn.Linear(embed_size * 2, embed_size)
 
         self.lstm_cell = nn.LSTMCell(embed_size, hidden_size)
-        self.attn = nn.Linear( hidden_size, 289)
+        self.attn = nn.Linear( hidden_size, attn_size)
 
         self.log_softmax = nn.LogSoftmax()
         self.dropout = nn.Dropout()
@@ -181,7 +184,6 @@ class G_Spatial(nn.Module):
 
     def lstm_attention(self, inputs, hx,cx, features):
         inputs = self.v2h(inputs)
-        #inputs = self.dropout(inputs)
         hx, cx = self.lstm_cell(inputs, (hx,cx))
         hx, cx = self.dropout(hx), self.dropout(cx)
 
