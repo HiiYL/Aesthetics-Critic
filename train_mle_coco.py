@@ -138,7 +138,6 @@ def run(save_path, args):
                 inputs = Variable(images.data, volatile=True)
             features = Variable(encoder(inputs).data)
             features_g, features_l = netG.encode_fc(features)
-            #features_g, features_l = features_g.detach(), features_l.detach()
             out = netG((features_g, features_l), y_v, lengths, state, teacher_forced=True)
 
             mle_loss = criterion(out, targets)
