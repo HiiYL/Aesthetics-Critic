@@ -52,7 +52,6 @@ def run(save_path, args):
 
     test_transform = transforms.Compose([
         transforms.Scale((args.image_size,args.image_size)),
-        transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
