@@ -114,8 +114,8 @@ class EncoderFC(nn.Module):
         x = self.fc_local(x)
 
         # batch * 64 x 512 -> batch x 64 x 512
-        x_local  = x.view(batch, im_size_w * im_size_h, -1)
-        x_global = self.fc_global(x_global)
+        x_local  = F.dropout(x.view(batch, im_size_w * im_size_h, -1))
+        x_global = F.dropout(self.fc_global(x_global))
 
         return x_global, x_local
 
@@ -486,7 +486,7 @@ class G_Spatial(nn.Module):
         hx, cx = states
         hx, cx = hx[0], cx[0]
 
-        batch_size = features_global.size(0)
+        batch_size = features.size(0)
         if hx.size(0) != batch_size:
             hx = hx[:batch_size]
             cx = cx[:batch_size]

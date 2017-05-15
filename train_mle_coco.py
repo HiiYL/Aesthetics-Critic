@@ -43,14 +43,14 @@ def run(save_path, args):
     
     # Image preprocessing
     train_transform = transforms.Compose([
-        transforms.Scale((299,299)),
+        transforms.Scale((598,598)),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
 
 
     test_transform = transforms.Compose([
-        transforms.Scale((299,299)),
+        transforms.Scale((598,598)),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
@@ -334,8 +334,8 @@ if __name__ == '__main__':
                         help='number of layers in gru')
     parser.add_argument('--clip', type=float, default=0.25,
                     help='gradient clipping')
-    parser.add_argument('--netG', type=str, default="logs/coco/14052017174557/netG-1-10000.pkl")
-    parser.add_argument('--encoder', type=str, default="logs/coco/14052017174557/encoder-1-10000.pkl")
+    parser.add_argument('--netG', type=str)
+    parser.add_argument('--encoder', type=str)
     
     parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=20)

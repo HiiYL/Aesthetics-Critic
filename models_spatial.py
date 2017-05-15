@@ -93,11 +93,22 @@ class EncoderFC(nn.Module):
         self.relu = nn.ReLU()
         self.dropout = nn.Dropout()
 
-        self.fc_global.weight.data.normal_(0.0, 0.02)
-        self.fc_global.bias.data.fill_(0)
+        self._initialize_weights()
 
-        self.fc_local.weight.data.normal_(0.0, 0.02)
-        self.fc_local.bias.data.fill_(0)
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+            elif isinstance(m, nn.Linear):
+                n = m.weight.size(1)
+                m.weight.data.normal_(0, 0.01)
+                m.bias.data.zero_()
 
     def forward(self, x):
         x_global = F.avg_pool2d(x, kernel_size=x.size()[2:])[:,:,0,0]
@@ -131,42 +142,41 @@ class G_Spatial(nn.Module):
         self.hidden_size = hidden_size
         self.embed_size = embed_size
 
-        # self.fc = nn.Sequential(
-        #     nn.Linear(hidden_size * 2, hidden_size * 2),
-        #     nn.BatchNorm1d(hidden_size * 2),
-        #     nn.Dropout(),
-        #     nn.Linear(hidden_size * 2, hidden_size * 2),
-        #     nn.BatchNorm1d(hidden_size * 2),
-        #     nn.Linear(hidden_size * 2, self.vocab_size)
-        # )
-        self.fc = nn.Linear(hidden_size * 2, self.vocab_size)
+        self.fc = nn.Sequential(
+            nn.Linear(hidden_size * 2, 4096),
+            nn.ReLU(True),
+            nn.Dropout(),
+            nn.Linear(4096, 4096),
+            nn.ReLU(True),
+            nn.Dropout(),
+            nn.Linear(4096, self.vocab_size)
+        )
+        #self.fc = nn.Linear(hidden_size * 2, self.vocab_size)
         self.embed = nn.Linear(self.vocab_size, embed_size)
         self.v2h = nn.Linear(embed_size * 2, embed_size)
 
         self.lstm_cell = nn.LSTMCell(embed_size, hidden_size)
-        self.attn = nn.Linear( hidden_size, 64)
+        self.attn = nn.Linear( hidden_size, 289)
 
         self.log_softmax = nn.LogSoftmax()
         self.dropout = nn.Dropout()
         self.relu = nn.ReLU()
-        self.init_weights()
+        self._initialize_weights()
     
-    def init_weights(self):
-        """Initialize weights."""
-        # for layer in self.fc:
-        #     layer.weight.data.uniform_(-0.1, 0.1)
-        #     layer.bias.data.fill_(0)
-        self.fc.weight.data.uniform_(-0.1, 0.1)
-        self.fc.bias.data.fill_(0)
-
-        self.embed.weight.data.uniform_(-0.1, 0.1)
-        self.embed.bias.data.fill_(0)
-
-        self.v2h.weight.data.uniform_(-0.1, 0.1)
-        self.v2h.bias.data.fill_(0)
-
-        self.attn.weight.data.normal_(0.0, 0.02)
-        self.attn.bias.data.fill_(0)
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+            elif isinstance(m, nn.Linear):
+                n = m.weight.size(1)
+                m.weight.data.normal_(0, 0.01)
+                m.bias.data.zero_()
 
 
     def lstm_attention(self, inputs, hx,cx, features):
