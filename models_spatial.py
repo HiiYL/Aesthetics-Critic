@@ -9,7 +9,7 @@ from torch.nn.utils.rnn import pack_padded_sequence,pad_packed_sequence,PackedSe
 import torchvision.models as models
 import os
 import torch.nn.functional as F
-from torch.nn.init import xavier_uniform
+from torch.nn.init import kaiming_uniform
 
 class EncoderCNN(nn.Module):
     def __init__(self, embed_size,inception, requires_grad=False):
@@ -116,7 +116,7 @@ class EncoderFC(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
             elif isinstance(m, nn.Linear):
-                xavier_uniform(m.weight.data)
+                kaiming_uniform(m.weight.data)
                 m.bias.data.zero_()
                 
 
@@ -164,8 +164,8 @@ class G_Spatial(nn.Module):
         self.v2h = nn.Linear(embed_size * 2, embed_size)
 
         self.lstm_cell = nn.LSTMCell(embed_size, hidden_size)
-        self.attn_hx = nn.Linear( hidden_size, attn_size)
-        self.attn_cx = nn.Linear( hidden_size, attn_size)
+        self.attn = nn.Linear( hidden_size, attn_size)
+        #self.attn_cx = nn.Linear( hidden_size, attn_size)
 
         self.log_softmax = nn.LogSoftmax()
         self.dropout = nn.Dropout()
@@ -183,7 +183,7 @@ class G_Spatial(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
             elif isinstance(m, nn.Linear):
-                xavier_uniform(m.weight.data)
+                kaiming_uniform(m.weight.data)
                 m.bias.data.zero_()
                 
 
@@ -191,17 +191,17 @@ class G_Spatial(nn.Module):
     def lstm_attention(self, inputs, hx,cx, features):
         inputs = self.v2h(inputs)
         hx, cx = self.lstm_cell(inputs, (hx,cx))
-        hx, cx = self.dropout(hx), self.dropout(cx)
+        #hx, cx = self.dropout(hx), self.dropout(cx)
 
         # cross attention
-        attn_weights_hx = F.softmax(self.attn_hx(hx))
-        attn_weights_cx = F.softmax(self.attn_cx(cx))
-        visual_cx = torch.bmm(attn_weights_hx.unsqueeze(1), features).squeeze(1)
-        visual_hx = torch.bmm(attn_weights_cx.unsqueeze(1), features).squeeze(1)
+        attn_weights_hx = F.softmax(self.attn(hx))
+        #attn_weights_cx = F.softmax(self.attn_cx(cx))
+        attn_cx = torch.bmm(attn_weights_hx.unsqueeze(1), features).squeeze(1)
+        #visual_hx = torch.bmm(attn_weights_cx.unsqueeze(1), features).squeeze(1)
 
         # skip connection
-        hx = hx + visual_hx
-        cx = cx + visual_cx
+        #hx = hx + visual_hx
+        cx = attn_cx #cx + visual_cx
 
 
         return hx, cx
