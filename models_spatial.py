@@ -96,7 +96,7 @@ class EncoderFC(nn.Module):
         super(EncoderFC, self).__init__()
         self.fc_global = nn.Sequential(
             nn.Linear(2048, 512),
-            nn.BatchNorm1d(512),
+            #nn.BatchNorm1d(512),
             nn.ReLU(),
             nn.Dropout()
         )
@@ -104,7 +104,7 @@ class EncoderFC(nn.Module):
 
         self.fc_local  = nn.Sequential(
             nn.Linear(2048, 512),
-            nn.BatchNorm1d(512),
+            #nn.BatchNorm1d(512),
             nn.ReLU(),
             nn.Dropout()
         )
@@ -299,6 +299,50 @@ class G_Spatial(nn.Module):
         x = (input + noise) / tau
         x = F.softmax(x.view(input.size(0), -1))
         return x.view_as(input)
+
+
+    def sample(self, features, states):
+        MAX_LENGTH=50
+        features_global, features_local = features
+
+        output_tensor = torch.cuda.LongTensor(features_local.size(0),MAX_LENGTH,1)
+        features_global, features_local = features
+        if self.image_first:
+            inputs = features_global
+        else:
+            onehot = torch.cuda.FloatTensor(features_global.size(0), self.vocab_size).fill_(0)
+            onehot[:,self.start_idx] = 1
+            onehot = Variable(onehot)
+            inputs = self.embed(onehot)
+
+        hx, cx = states
+        hx, cx = hx[0], cx[0]
+
+        batch_size = features_global.size(0)
+        if hx.size(0) != batch_size:
+            hx = hx[:batch_size]
+            cx = cx[:batch_size]
+
+        for i in range(MAX_LENGTH):
+            inputs = torch.cat((inputs, features_global),1)
+            hx, cx = self.lstm_attention(inputs, hx,cx, features_local)
+
+            combined = torch.cat((hx,cx), 1)
+            outputs = self.fc(combined)
+            predicted = outputs.max(1)[1]
+            output_tensor [:,i,:] = predicted.data
+            onehot = torch.cuda.FloatTensor(features_global.size(0), self.vocab_size).fill_(0)
+
+            predicted_numpy = predicted.data.cpu().numpy()
+            for j in range(64):
+                onehot[j, predicted_numpy[j][0]] = 1
+
+            onehot = Variable(onehot)
+            inputs = self.embed(onehot)
+
+
+        return output_tensor
+
 
     def beamSearch(self, features, states, n=1, diverse_gamma=0.0):
         features_global, features_local = features

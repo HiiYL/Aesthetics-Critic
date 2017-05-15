@@ -40,6 +40,13 @@ def run(save_path, args):
     # Create model directory
     if not os.path.exists(args.model_path):
         os.makedirs(args.model_path)
+
+    if args.beam == 1:
+        use_beam = False
+        val_batch_size = 64
+    else:
+        use_beam = True
+        val_batch_size = 1
     
     # Image preprocessing
     train_transform = transforms.Compose([
@@ -66,7 +73,7 @@ def run(save_path, args):
                              train_transform, args.batch_size,
                              shuffle=True, num_workers=args.num_workers)
     val_data_loader = get_loader("val", vocab, 
-                             test_transform, 1,
+                             test_transform, val_batch_size,
                              shuffle=False, num_workers=args.num_workers)
 
     finetune = args.finetune
@@ -86,8 +93,8 @@ def run(save_path, args):
     
     state = (Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)),
      Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)))
-    val_state = (Variable(torch.zeros(args.num_layers, 1, args.hidden_size)),
-     Variable(torch.zeros(args.num_layers, 1, args.hidden_size)))
+    val_state = (Variable(torch.zeros(args.num_layers, val_batch_size, args.hidden_size)),
+     Variable(torch.zeros(args.num_layers, val_batch_size, args.hidden_size)))
 
     y_onehot = torch.FloatTensor(args.batch_size, 20,len(vocab))
 
@@ -198,13 +205,13 @@ def run(save_path, args):
                 log_value('Perplexity', np.exp(mle_loss.data[0]), total_iterations)
 
             if (total_iterations+1) % args.save_step == 0:
-                validate(encoder, netG, val_data_loader, val_state, criterion, vocab, total_iterations)
+                validate(encoder, netG, val_data_loader, val_state, criterion, vocab, total_iterations, use_beam)
 
             total_iterations += 1
 
 
 
-def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iterations):
+def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iterations, use_beam):
     ### MS COCO Eval code prepation
     ## set up file names and pathes
     dataDir='data/coco'
@@ -243,24 +250,44 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
         features = encoder(images)
         features_g, features_l = netG.encode_fc(features)
 
-        sampled_ids_list, terminated_confidences = netG.beamSearch((features_g, features_l), state, n=3, diverse_gamma=0.0)
-        sampled_ids_list = np.array([ sampled_ids.cpu().data.numpy() for sampled_ids in sampled_ids_list ])
+        if use_beam:
+            sampled_ids_list, terminated_confidences = netG.beamSearch((features_g, features_l), state, n=3, diverse_gamma=0.0)
+            sampled_ids_list = np.array([ sampled_ids.cpu().data.numpy() for sampled_ids in sampled_ids_list ])
 
-        max_index = np.argmin(terminated_confidences) ## Should this be min?
-        #print(max_index)
-        sampled_ids = sampled_ids_list[max_index]
+            max_index = np.argmin(terminated_confidences) ## Should this be min?
+            #print(max_index)
+            sampled_ids = sampled_ids_list[max_index]
 
-        sampled_caption = []
-        for word_id in sampled_ids:
-            word = vocab.idx2word[word_id]
-            if word in ['<end', '<pad>']:
-                break
-            if word != '<start>':
-                sampled_caption.append(word)
+            sampled_caption = []
+            for word_id in sampled_ids:
+                word = vocab.idx2word[word_id]
+                if word in ['<end', '<pad>']:
+                    break
+                if word != '<start>':
+                    sampled_caption.append(word)
 
-        sentence = ' '.join(sampled_caption)
-        item_json = {"image_id": img_id[0], "caption": sentence}
-        val_json.append(item_json)
+            sentence = ' '.join(sampled_caption)
+            item_json = {"image_id": img_id[0], "caption": sentence}
+            val_json.append(item_json)
+        else:
+            sampled_ids = netG.sample((features_g, features_l), state)
+            sampled_ids = sampled_ids.cpu().numpy()
+            for sentence in sampled_ids:
+                sampled_caption = []
+                for word_id in sentence:
+                    word_id = word_id[0]
+                    word = vocab.idx2word[word_id]
+                    if word in ['<end', '<pad>']:
+                        break
+                    if word != '<start>':
+                        sampled_caption.append(word)
+                sentence = ' '.join(sampled_caption)
+                item_json = {"image_id": img_id[0], "caption": sentence}
+                val_json.append(item_json)
+
+        # sentence = ' '.join(sampled_caption)
+        # item_json = {"image_id": img_id[0], "caption": sentence}
+        # val_json.append(item_json)
         # outputs, _ = netG(features, captions, lengths, state, teacher_forced=False)
         # sampled_ids = torch.max(outputs,1)[1].squeeze()
         # sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
@@ -349,6 +376,7 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate', type=float, default=4e-4)
     parser.add_argument('--finetune', action='store_true')
     parser.add_argument('--description', help="a small description describing what the experiment is about", default="")
+    parser.add_argument('--beam', type=int, default=1)
     args = parser.parse_args()
     print(args)
     if not os.path.exists("logs"):
