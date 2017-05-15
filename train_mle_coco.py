@@ -66,8 +66,9 @@ def run(save_path, args):
                              test_transform, 1,
                              shuffle=False, num_workers=args.num_workers)
 
+    finetune = args.finetune
     # Build the models
-    encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True), requires_grad=False)
+    encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True), requires_grad=finetune)
     netG = G_Spatial(args.embed_size, args.hidden_size, vocab, args.num_layers, attn_size=64)
 
     if args.netG:
@@ -129,7 +130,8 @@ def run(save_path, args):
             y_v = Variable(y_onehot)
 
             netG.zero_grad()
-            inputs = Variable(images.data, volatile=True)
+            volatile = !finetune
+            inputs = Variable(images.data, volatile=volatile)
             features = Variable(encoder(inputs).data)
             features_g, features_l = netG.encode_fc(features)
             #features_g, features_l = features_g.detach(), features_l.detach()
@@ -341,6 +343,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=20)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--learning_rate', type=float, default=4e-4)
+    parser.add_argument('--finetune', action='store_true')
     args = parser.parse_args()
     print(args)
     if not os.path.exists("logs"):
