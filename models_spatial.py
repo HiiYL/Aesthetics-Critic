@@ -187,7 +187,7 @@ class G_Spatial(nn.Module):
         attn_weights = F.softmax(self.attn(hx))
         cx = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
         # skip connection
-        #cx = cx + visual_cx
+        cx = cx + visual_cx
         return hx, cx
 
     def lstm_attention_classical(self, inputs, hx,cx, features):
