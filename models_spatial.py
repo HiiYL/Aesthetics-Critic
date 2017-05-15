@@ -9,6 +9,7 @@ from torch.nn.utils.rnn import pack_padded_sequence,pad_packed_sequence,PackedSe
 import torchvision.models as models
 import os
 import torch.nn.functional as F
+from torch.nn.init import xavier_uniform
 
 class EncoderCNN(nn.Module):
     def __init__(self, embed_size,inception, requires_grad=False):
@@ -89,6 +90,7 @@ class EncoderFC(nn.Module):
         super(EncoderFC, self).__init__()
         self.fc_global = nn.Sequential(
             nn.Linear(2048, 512),
+            nn.BatchNorm1d(512),
             nn.ReLU(),
             nn.Dropout()
         )
@@ -96,6 +98,7 @@ class EncoderFC(nn.Module):
 
         self.fc_local  = nn.Sequential(
             nn.Linear(2048, 512),
+            nn.BatchNorm1d(512),
             nn.ReLU(),
             nn.Dropout()
         )
@@ -113,9 +116,9 @@ class EncoderFC(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
             elif isinstance(m, nn.Linear):
-                n = m.weight.size(1)
-                m.weight.data.normal_(0, 0.01)
+                xavier_uniform(m.weight.data)
                 m.bias.data.zero_()
+                
 
     def forward(self, x):
         x_global = F.avg_pool2d(x, kernel_size=x.size()[2:])[:,:,0,0]
@@ -146,20 +149,23 @@ class G_Spatial(nn.Module):
         self.embed_size = embed_size
 
         self.fc = nn.Sequential(
-            nn.Linear(hidden_size * 2, 4096),
+            nn.Linear(hidden_size * 2, hidden_size * 2),
+            nn.BatchNorm1d(hidden_size * 2),
             nn.ReLU(),
             nn.Dropout(),
-            nn.Linear(4096, 4096),
+            nn.Linear(hidden_size * 2, hidden_size * 2),
+            nn.BatchNorm1d(hidden_size * 2),
             nn.ReLU(),
             nn.Dropout(),
-            nn.Linear(4096, self.vocab_size)
+            nn.Linear(hidden_size * 2, self.vocab_size)
         )
         #self.fc = nn.Linear(hidden_size * 2, self.vocab_size)
         self.embed = nn.Linear(self.vocab_size, embed_size)
         self.v2h = nn.Linear(embed_size * 2, embed_size)
 
         self.lstm_cell = nn.LSTMCell(embed_size, hidden_size)
-        self.attn = nn.Linear( hidden_size, attn_size)
+        self.attn_hx = nn.Linear( hidden_size, attn_size)
+        self.attn_cx = nn.Linear( hidden_size, attn_size)
 
         self.log_softmax = nn.LogSoftmax()
         self.dropout = nn.Dropout()
@@ -177,9 +183,9 @@ class G_Spatial(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
             elif isinstance(m, nn.Linear):
-                n = m.weight.size(1)
-                m.weight.data.normal_(0, 0.01)
+                xavier_uniform(m.weight.data)
                 m.bias.data.zero_()
+                
 
 
     def lstm_attention(self, inputs, hx,cx, features):
@@ -187,8 +193,17 @@ class G_Spatial(nn.Module):
         hx, cx = self.lstm_cell(inputs, (hx,cx))
         hx, cx = self.dropout(hx), self.dropout(cx)
 
-        attn_weights = F.softmax(self.attn(hx))
-        cx = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
+        # cross attention
+        attn_weights_hx = F.softmax(self.attn_hx(hx))
+        attn_weights_cx = F.softmax(self.attn_cx(cx))
+        visual_cx = torch.bmm(attn_weights_hx.unsqueeze(1), features).squeeze(1)
+        visual_hx = torch.bmm(attn_weights_cx.unsqueeze(1), features).squeeze(1)
+
+        # skip connection
+        hx = hx + visual_hx
+        cx = cx + visual_cx
+
+
         return hx, cx
 
          
