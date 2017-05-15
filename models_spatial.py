@@ -30,8 +30,6 @@ class EncoderCNN(nn.Module):
         self.Mixed_6c = inception.Mixed_6c
         self.Mixed_6d = inception.Mixed_6d
         self.Mixed_6e = inception.Mixed_6e
-        # if aux_logits:
-        #     self.AuxLogits = inception.AuxLogits
         self.Mixed_7a = inception.Mixed_7a
         self.Mixed_7b = inception.Mixed_7b
         self.Mixed_7c = inception.Mixed_7c
@@ -41,12 +39,10 @@ class EncoderCNN(nn.Module):
 
     def forward(self, x):
         """Extract the image feature vectors."""
-
         x = x.clone()
         x[:, 0] = x[:, 0] * (0.229 / 0.5) + (0.485 - 0.5) / 0.5
         x[:, 1] = x[:, 1] * (0.224 / 0.5) + (0.456 - 0.5) / 0.5
         x[:, 2] = x[:, 2] * (0.225 / 0.5) + (0.406 - 0.5) / 0.5
-
         # 299 x 299 x 3
         x = self.Conv2d_1a_3x3(x)
         # 149 x 149 x 32
@@ -78,16 +74,11 @@ class EncoderCNN(nn.Module):
         # 17 x 17 x 768
         x = self.Mixed_6e(x)
         # 17 x 17 x 768
-        # if self.training and self.aux_logits:
-        #     aux = self.AuxLogits(x)
-        # 17 x 17 x 768
         x = self.Mixed_7a(x)
         # 8 x 8 x 1280
         x = self.Mixed_7b(x)
         # 8 x 8 x 2048
         x = self.Mixed_7c(x)
-        # 8 x 8 x 2048
-        #x = F.dropout(x, training=self.training)
 
         return x
 
@@ -124,7 +115,6 @@ class EncoderFC(nn.Module):
             elif isinstance(m, nn.Linear):
                 kaiming_uniform(m.weight.data)
                 m.bias.data.zero_()
-                
 
     def forward(self, x):
         x_global = F.avg_pool2d(x, kernel_size=x.size()[2:])[:,:,0,0]
@@ -196,10 +186,17 @@ class G_Spatial(nn.Module):
     def lstm_attention(self, inputs, hx,cx, features):
         inputs = self.v2h(inputs)
         hx, cx = self.lstm_cell(inputs, (hx,cx))
-
         attn_weights = F.softmax(self.attn(hx))
         cx = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
+        # skip connection
+        #cx = cx + visual_cx
+        return hx, cx
 
+    def lstm_attention_classical(self, inputs, hx,cx, features):
+        inputs = self.v2h(inputs)
+        attn_weights = F.softmax(self.attn(hx)).unsqueeze(1)
+        cx = torch.bmm(attn_weights, features).squeeze(1)
+        hx, cx = self.lstm_cell(inputs, (hx,cx))
         # skip connection
         #cx = cx + visual_cx
         return hx, cx
@@ -213,7 +210,9 @@ class G_Spatial(nn.Module):
             return self._forward_free_cell(features, lengths, state)
 
     def _forward_forced_cell(self, features, captions, lengths, states):
+
         features_global, features_local = features
+        
         if isinstance(captions, tuple):
             captions, batch_sizes = captions
             embeddings = self.embed(captions)
@@ -257,8 +256,8 @@ class G_Spatial(nn.Module):
 
     def _forward_free_cell(self, features, lengths, states, adversarial=False):
         output_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.vocab_size))
-
         features_global, features_local = features
+
         if self.image_first:
             inputs = features_global
         else:
@@ -299,7 +298,6 @@ class G_Spatial(nn.Module):
         x = (input + noise) / tau
         x = F.softmax(x.view(input.size(0), -1))
         return x.view_as(input)
-
 
     def sample(self, features, states):
         MAX_LENGTH=50
@@ -342,7 +340,6 @@ class G_Spatial(nn.Module):
 
 
         return output_tensor
-
 
     def beamSearch(self, features, states, n=1, diverse_gamma=0.0):
         features_global, features_local = features
