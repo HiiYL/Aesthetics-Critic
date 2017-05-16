@@ -109,8 +109,6 @@ class EncoderFC(nn.Module):
     def forward(self, x):
         x_global = F.avg_pool2d(x, kernel_size=x.size()[2:])[:,:,0,0]
         x_global = self.fc_global(x_global)
-        #x_global = self.relu(x_global)
-        #x_global = self.dropout(x_global)
 
         # batch x 2048 x 8 x 8 -> batch x 8 x 8 x 2048
         x_local = x.permute(0,2,3,1).contiguous()
@@ -121,8 +119,6 @@ class EncoderFC(nn.Module):
         x_local = self.fc_local(x_local)
         # batch * 64 x 512 -> batch x 64 x 512
         x_local  = x_local.view(batch, im_size_w * im_size_h, -1)
-        #x_local  = self.relu(x_local)
-        #x_local = self.dropout(x_local)
 
         return x_global, x_local
 
@@ -138,14 +134,6 @@ class G_Spatial(nn.Module):
         self.hidden_size = hidden_size
         self.embed_size = embed_size
 
-        # =self.fc = nn.Sequential(
-        #     nn.Linear(hidden_size * 2, hidden_size * 2),
-        #     nn.BatchNorm1d(hidden_size * 2),
-        #     nn.Dropout(),
-        #     nn.Linear(hidden_size * 2, hidden_size * 2),
-        #     nn.BatchNorm1d(hidden_size * 2),
-        #     nn.Linear(hidden_size * 2, self.vocab_size)
-        # )
         self.fc = nn.Linear(hidden_size * 2, self.vocab_size)
         self.embed = nn.Linear(self.vocab_size, embed_size)
         self.v2h = nn.Linear(embed_size * 2, embed_size)
@@ -167,12 +155,14 @@ class G_Spatial(nn.Module):
 
     def lstm_attention(self, inputs, hx,cx, features):
         inputs = self.v2h(inputs)
+        inputs = self.dropout(inputs)
+
         hx, cx = self.lstm_cell(inputs, (hx,cx))
 
         attn_weights = F.softmax(self.attn(hx))
         visual_cx = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
         cx = cx + visual_cx
-
+        
         return hx, cx
 
          
