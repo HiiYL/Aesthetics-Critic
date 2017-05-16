@@ -239,7 +239,7 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
         sampled_ids_list, terminated_confidences = netG.beamSearch((features_g, features_l), state, n=3, diverse_gamma=0.0)
         sampled_ids_list = np.array([ sampled_ids.cpu().data.numpy() for sampled_ids in sampled_ids_list ])
 
-        max_index = np.argmin(terminated_confidences) ## Should this be min?
+        max_index = np.argmax(terminated_confidences)
         #print(max_index)
         sampled_ids = sampled_ids_list[max_index]
 
@@ -254,28 +254,9 @@ def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iter
         sentence = ' '.join(sampled_caption)
         item_json = {"image_id": img_id[0], "caption": sentence}
         val_json.append(item_json)
-        # outputs, _ = netG(features, captions, lengths, state, teacher_forced=False)
-        # sampled_ids = torch.max(outputs,1)[1].squeeze()
-        # sampled_ids = pad_packed_sequence([sampled_ids, batch_sizes], batch_first=True)[0]
-        # sampled_ids = sampled_ids.cpu().data.numpy()
-        # loss        = criterion(outputs, targets)
-
-        # for j, comment in enumerate(sampled_ids):
-        #     sampled_caption = []
-        #     for word_id in comment:
-        #         word = vocab.idx2word[word_id]
-        #         if word == '<end>':
-        #             break
-        #         elif word == '<start>' and word == '<pad>':
-        #             continue
-        #         else:
-        #             sampled_caption.append(word)
-
-        #     item_json = {"image_id": img_id[j], "caption":' '.join(sampled_caption) }
-        #     val_json.append(item_json)
 
         # # Print log info
-        if i % args.log_step * 10 == 0:
+        if i % (args.log_step * 10) == 0:
            print('[%d/%d] - Running model on validation set....'
                  %(i, total_val_step))
 
@@ -334,8 +315,8 @@ if __name__ == '__main__':
                         help='number of layers in gru')
     parser.add_argument('--clip', type=float, default=0.25,
                     help='gradient clipping')
-    parser.add_argument('--netG', type=str, default="logs/coco/14052017174557/netG-1-10000.pkl")
-    parser.add_argument('--encoder', type=str, default="logs/coco/14052017174557/encoder-1-10000.pkl")
+    parser.add_argument('--netG', type=str)
+    parser.add_argument('--encoder', type=str)
     
     parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=20)

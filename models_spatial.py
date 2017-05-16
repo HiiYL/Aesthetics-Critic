@@ -173,10 +173,13 @@ class G_Spatial(nn.Module):
         inputs = self.v2h(inputs)
         #inputs = self.dropout(inputs)
         hx, cx = self.lstm_cell(inputs, (hx,cx))
-        hx, cx = self.dropout(hx), self.dropout(cx)
 
         attn_weights = F.softmax(self.attn(hx))
-        cx = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
+        visual_cx = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
+        cx = cx + visual_cx
+
+        #hx, cx = self.dropout(hx), self.dropout(cx)
+
         return hx, cx
 
          
