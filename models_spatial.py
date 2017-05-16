@@ -9,6 +9,7 @@ from torch.nn.utils.rnn import pack_padded_sequence,pad_packed_sequence,PackedSe
 import torchvision.models as models
 import os
 import torch.nn.functional as F
+from torch.nn.init import kaiming_uniform
 
 class EncoderCNN(nn.Module):
     def __init__(self, embed_size,inception, requires_grad=False):
@@ -87,23 +88,29 @@ class EncoderCNN(nn.Module):
 class EncoderFC(nn.Module):
     def __init__(self):
         super(EncoderFC, self).__init__()
-        self.fc_global = nn.Linear(2048, 512)
-        self.fc_local  = nn.Linear(2048, 512)
+        self.fc_global = nn.Sequential(
+            nn.Linear(2048, 512),
+            nn.ReLU(),
+            nn.Dropout()
+        )
+        self.fc_local = nn.Sequential(
+            nn.Linear(2048, 512),
+            nn.ReLU(),
+            nn.Dropout()
+        )
+        self._initialize_weights()
 
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout()
-
-        self.fc_global.weight.data.normal_(0.0, 0.02)
-        self.fc_global.bias.data.fill_(0)
-
-        self.fc_local.weight.data.normal_(0.0, 0.02)
-        self.fc_local.bias.data.fill_(0)
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                kaiming_uniform(m.weight.data)
+                m.bias.data.zero_()
 
     def forward(self, x):
         x_global = F.avg_pool2d(x, kernel_size=x.size()[2:])[:,:,0,0]
         x_global = self.fc_global(x_global)
-        x_global = self.relu(x_global)
-        x_global = self.dropout(x_global)
+        #x_global = self.relu(x_global)
+        #x_global = self.dropout(x_global)
 
         # batch x 2048 x 8 x 8 -> batch x 8 x 8 x 2048
         x_local = x.permute(0,2,3,1).contiguous()
@@ -114,8 +121,8 @@ class EncoderFC(nn.Module):
         x_local = self.fc_local(x_local)
         # batch * 64 x 512 -> batch x 64 x 512
         x_local  = x_local.view(batch, im_size_w * im_size_h, -1)
-        x_local  = self.relu(x_local)
-        x_local = self.dropout(x_local)
+        #x_local  = self.relu(x_local)
+        #x_local = self.dropout(x_local)
 
         return x_global, x_local
 
@@ -131,7 +138,7 @@ class G_Spatial(nn.Module):
         self.hidden_size = hidden_size
         self.embed_size = embed_size
 
-        # self.fc = nn.Sequential(
+        # =self.fc = nn.Sequential(
         #     nn.Linear(hidden_size * 2, hidden_size * 2),
         #     nn.BatchNorm1d(hidden_size * 2),
         #     nn.Dropout(),
@@ -149,24 +156,13 @@ class G_Spatial(nn.Module):
         self.log_softmax = nn.LogSoftmax()
         self.dropout = nn.Dropout()
         self.relu = nn.ReLU()
-        self.init_weights()
-    
-    def init_weights(self):
-        """Initialize weights."""
-        # for layer in self.fc:
-        #     layer.weight.data.uniform_(-0.1, 0.1)
-        #     layer.bias.data.fill_(0)
-        self.fc.weight.data.uniform_(-0.1, 0.1)
-        self.fc.bias.data.fill_(0)
+        self._initialize_weights()
 
-        self.embed.weight.data.uniform_(-0.1, 0.1)
-        self.embed.bias.data.fill_(0)
-
-        self.v2h.weight.data.uniform_(-0.1, 0.1)
-        self.v2h.bias.data.fill_(0)
-
-        self.attn.weight.data.normal_(0.0, 0.02)
-        self.attn.bias.data.fill_(0)
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                kaiming_uniform(m.weight.data)
+                m.bias.data.zero_()
 
 
     def lstm_attention(self, inputs, hx,cx, features):
