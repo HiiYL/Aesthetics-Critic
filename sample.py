@@ -7,7 +7,8 @@ import os
 from torch.autograd import Variable 
 from torchvision import transforms 
 from build_vocab import Vocabulary
-from models import EncoderCNN, DecoderRNN
+from models_spatial import EncoderCNN, G_Spatial
+from torchvision import models
 from PIL import Image
 
 
@@ -22,25 +23,29 @@ def main(args):
     with open(args.vocab_path, 'rb') as f:
         vocab = pickle.load(f)
 
-    # Build Models
-    encoder = EncoderCNN(args.embed_size, torch.load('data/net_model_epoch_10.pth').inception)
-    
-    decoder = DecoderRNN(args.embed_size, args.hidden_size, 
-                         vocab, args.num_layers)
-    
-    
+    # Build the models
+    encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True), requires_grad=False)
+    netG = G_Spatial(args.embed_size, args.hidden_size, vocab, args.num_layers)
 
-    # Load the trained model parameters
-    encoder.load_state_dict(torch.load(args.encoder_path, map_location=lambda storage, loc: storage))
-    decoder.load_state_dict(torch.load(args.decoder_path, map_location=lambda storage, loc: storage))
+    if args.encoder:
+        print("[!]loading pretrained decoder....")
+        encoder.load_state_dict(torch.load(args.encoder))
+        print("Done!")
+
+
+    if args.netG:
+        print("[!]loading pretrained netG....")
+        netG.load_state_dict(torch.load(args.netG))
+        print("Done!")
+
 
 
     encoder.eval()  # evaluation mode (BN uses moving mean/variance)
-    decoder.eval()
+    netG.eval()
 
     # Prepare Image       
     image = Image.open(args.image)
-    image_tensor = Variable(transform(image).unsqueeze(0), volatile=True)
+    image = Variable(transform(image).unsqueeze(0), volatile=True)
 
     #print(image_tensor)
     
@@ -51,27 +56,32 @@ def main(args):
     # If use gpu
     if torch.cuda.is_available():
        encoder.cuda()
-       decoder.cuda()
+       netG.cuda()
        state = [s.cuda() for s in state]
-       image_tensor = image_tensor.cuda()
+       image = image.cuda()
+
+    features = encoder(image)
+    features_g, features_l = netG.encode_fc(features)
+
+    sampled_ids_list, terminated_confidences = netG.beamSearch((features_g, features_l), state, n=10, diverse_gamma=0.0)
+    sampled_ids_list = np.array([ sampled_ids.cpu().data.numpy() for sampled_ids in sampled_ids_list ])
+
+    max_index = np.argmax(terminated_confidences)
     
-    # Generate caption from image
-    feature = encoder(image_tensor)
+    #print(max_index)
+    sampled_ids = sampled_ids_list[max_index]
+    def word_idx_to_sentence(sample):
+        sampled_caption = []
+        for word_id in sample:
+            word = vocab.idx2word[word_id]
+            sampled_caption.append(word)
+            if word == '<end>':
+                break
+        return ' '.join(sampled_caption)
 
-
-    sampled_ids = decoder.sample(feature, state)
-    sampled_ids = sampled_ids.cpu().data.numpy()
-    
-    # Decode word_ids to words
-    sampled_caption = []
-    for word_id in sampled_ids:
-        word = vocab.idx2word[word_id]
-        sampled_caption.append(word)
-        if word == '<end>':
-            break
-    sentence = ' '.join(sampled_caption)
-
-    print(sentence)
+    for sampled_ids in sampled_ids_list:
+        print(word_idx_to_sentence(sampled_ids))
+    #print(word_idx_to_sentence(sampled_ids))
 
     # sampled_ids_list, terminated_confidences = decoder.beamSearch(feature, None, n = args.n)
 
@@ -102,22 +112,22 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--image', type=str, required=True,
                         help='input image for generating caption')
-    parser.add_argument('--encoder_path', type=str, default='logs/aesthetics/29042017151130/encoder-1-20000.pkl',
+    parser.add_argument('--encoder', type=str, default='logs/aesthetics/16052017152815/encoder-1-8351.pkl',
                         help='path for trained encoder')
-    parser.add_argument('--decoder_path', type=str, default='logs/aesthetics/29042017151130/decoder-1-20000.pkl',
+    parser.add_argument('--netG', type=str, default='logs/aesthetics/16052017152815/netG-1-8351.pkl',
                         help='path for trained decoder')
-    parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
+    parser.add_argument('--vocab_path', type=str, default='data/vocab-aesthetics.pkl',
                         help='path for vocabulary wrapper')
     parser.add_argument('--crop_size', type=int, default=299,
                         help='size for center cropping images')
     
-    # Model parameters (should be same as paramters in train.py)
-    parser.add_argument('--embed_size', type=int , default=512,
+    # Model parameters
+    parser.add_argument('--embed_size', type=int , default=512 ,
                         help='dimension of word embedding vectors')
-    parser.add_argument('--hidden_size', type=int , default=512,
-                        help='dimension of lstm hidden states')
-    parser.add_argument('--num_layers', type=int , default=3 ,
-                        help='number of layers in lstm')
+    parser.add_argument('--hidden_size', type=int , default=512 ,
+                        help='dimension of gru hidden states')
+    parser.add_argument('--num_layers', type=int , default=1 ,
+                        help='number of layers in gru')
     parser.add_argument('--n', type=int , default=5 ,
                         help='n of beam search')
     args = parser.parse_args()

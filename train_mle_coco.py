@@ -76,7 +76,9 @@ def run(save_path, args):
         print("Done!")
 
     if args.encoder:
+        print("[!]loading pretrained decoder....")
         encoder.load_state_dict(torch.load(args.encoder))
+        print("Done!")
 
     criterion = nn.CrossEntropyLoss()
     
@@ -109,10 +111,6 @@ def run(save_path, args):
     total_iterations = 0
 
     for epoch in range(args.num_epochs):
-        # if epoch % 8 == 0:
-        #     lr = args.learning_rate * (0.5 ** (epoch // 8))
-        #     for param_group in optimizer.param_groups:
-        #         param_group['lr'] = lr
         for i, (images, captions, lengths, img_id) in enumerate(train_data_loader):
             # Set mini-batch dataset
             images = Variable(images)
@@ -132,7 +130,6 @@ def run(save_path, args):
             inputs = Variable(images.data, volatile=True)
             features = Variable(encoder(inputs).data)
             features_g, features_l = netG.encode_fc(features)
-            #features_g, features_l = features_g.detach(), features_l.detach()
             out = netG((features_g, features_l), y_v, lengths, state, teacher_forced=True)
 
             mle_loss = criterion(out, targets)
@@ -143,38 +140,7 @@ def run(save_path, args):
             # Print log info
             if total_iterations % args.log_step == 0:
                 print('Epoch [%d/%d], Step [%d/%d] Loss: %5.4f, Perplexity: %5.4f'
-                      %(epoch, args.num_epochs, i, total_step,  mle_loss.data[0], np.exp(mle_loss.data[0]))) 
-
-            # if total_iterations % 100 == 0:
-            #     print("")
-            #     outputs_free,_  = netG((features_g, features_l), y_v, lengths, state, teacher_forced=False)
-
-            #     sampled_ids_free = torch.max(outputs_free,1)[1].squeeze()
-            #     sampled_ids_free = pad_packed_sequence([sampled_ids_free, batch_sizes], batch_first=True)[0]
-            #     sampled_ids_free = sampled_ids_free.cpu().data.numpy()
-
-            #     def word_idx_to_sentence(sample):
-            #         sampled_caption = []
-            #         for word_id in sample:
-            #             word = vocab.idx2word[word_id]
-            #             sampled_caption.append(word)
-            #             if word == '<end>':
-            #                 break
-            #         return ' '.join(sampled_caption)
-
-            #     groundtruth_caption = captions.cpu().data.numpy()
-            #     sampled_captions = ""
-            #     for i, comment in enumerate(sampled_ids_free):
-            #         if i > 1:
-            #             break
-
-            #         sampled_caption   = word_idx_to_sentence(groundtruth_caption[i])
-            #         sampled_captions += "[G]{} \n".format(sampled_caption)
-
-            #         sampled_caption =  word_idx_to_sentence(comment)
-            #         sampled_captions += "[F]{} \n".format(sampled_caption)
-
-            #     print(sampled_captions)
+                      %(epoch, args.num_epochs, i, total_step,  mle_loss.data[0], np.exp(mle_loss.data[0])))
 
             # Save the model
             if (total_iterations+1) % args.save_step == 0:
@@ -303,7 +269,7 @@ if __name__ == '__main__':
                         help='step size for prining log info')
     parser.add_argument('--tb_log_step', type=int , default=100,
                         help='step size for prining log info')
-    parser.add_argument('--save_step', type=int , default=10000,
+    parser.add_argument('--save_step', type=int , default=8856,
                         help='step size for saving trained models')
     
     # Model parameters
@@ -319,7 +285,7 @@ if __name__ == '__main__':
     parser.add_argument('--encoder', type=str)
     
     parser.add_argument('--num_epochs', type=int, default=500)
-    parser.add_argument('--batch_size', type=int, default=20)
+    parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--learning_rate', type=float, default=4e-4)
     args = parser.parse_args()
