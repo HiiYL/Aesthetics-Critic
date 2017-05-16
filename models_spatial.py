@@ -171,14 +171,11 @@ class G_Spatial(nn.Module):
 
     def lstm_attention(self, inputs, hx,cx, features):
         inputs = self.v2h(inputs)
-        #inputs = self.dropout(inputs)
         hx, cx = self.lstm_cell(inputs, (hx,cx))
 
         attn_weights = F.softmax(self.attn(hx))
         visual_cx = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
         cx = cx + visual_cx
-
-        #hx, cx = self.dropout(hx), self.dropout(cx)
 
         return hx, cx
 
