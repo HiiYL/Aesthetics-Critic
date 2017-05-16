@@ -139,7 +139,7 @@ class G_Spatial(nn.Module):
         self.v2h = nn.Linear(embed_size * 2, embed_size)
 
         self.lstm_cell = nn.LSTMCell(embed_size, hidden_size)
-        self.attn = nn.Linear( hidden_size, 64)
+        self.attn = nn.Linear( hidden_size * 2, 64)
 
         self.log_softmax = nn.LogSoftmax()
         self.dropout = nn.Dropout()
@@ -159,7 +159,8 @@ class G_Spatial(nn.Module):
 
         hx, cx = self.lstm_cell(inputs, (hx,cx))
 
-        attn_weights = F.softmax(self.attn(hx))
+        attn_input = torch.cat((inputs, hx), 1)
+        attn_weights = F.softmax(self.attn(attn_input))
         visual_cx = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
         cx = cx + visual_cx
         
