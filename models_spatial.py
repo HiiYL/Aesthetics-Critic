@@ -134,7 +134,7 @@ class G_Spatial(nn.Module):
         self.hidden_size = hidden_size
         self.embed_size = embed_size
 
-        self.fc = nn.Linear(hidden_size, self.vocab_size)
+        self.fc = nn.Linear(hidden_size * 2, self.vocab_size)
         self.embed = nn.Linear(self.vocab_size, embed_size)
         self.v2h = nn.Linear(embed_size * 2, embed_size)
 
@@ -207,7 +207,7 @@ class G_Spatial(nn.Module):
             embeddings = embeddings.view(batch_size, caption_length, -1)
 
         embeddings = torch.cat((features_global.unsqueeze(1), embeddings), 1)
-        hiddens_ctx_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
+        hiddens_ctx_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size * 2))
         hx, cx = states
         hx, cx = hx[0], cx[0]
 
@@ -221,7 +221,7 @@ class G_Spatial(nn.Module):
             inputs = torch.cat((inputs, features_global),1)
 
             hx, cx = self.lstm_attention(inputs, hx,cx, features_local)
-            hiddens_ctx_tensor[ :, i, :] = hx + cx#torch.cat((hx,cx),1)
+            hiddens_ctx_tensor[ :, i, :] = torch.cat((hx,cx),1)
 
         hiddens_ctx_tensor_packed, _ = pack_padded_sequence(hiddens_ctx_tensor, lengths, batch_first=True)
         outputs = self.fc(hiddens_ctx_tensor_packed)
@@ -229,7 +229,7 @@ class G_Spatial(nn.Module):
 
     def _forward_free_cell(self, features, lengths, states, adversarial=False):
         output_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.vocab_size))
-        hiddens_ctx_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
+        hiddens_ctx_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size * 2))
 
         features_global, features_local = features
         inputs = features_global
@@ -250,7 +250,7 @@ class G_Spatial(nn.Module):
             inputs = torch.cat((inputs, features_global),1)
             hx, cx = self.lstm_attention(inputs, hx,cx, features_local)
 
-            combined = hx + cx #torch.cat((hx,cx), 1)
+            combined = torch.cat((hx,cx), 1)
             outputs = self.fc(combined)
             tau = 0.5 if adversarial else 1e-5
             outputs = self.gumbel_sample(outputs, tau=tau)
@@ -285,7 +285,7 @@ class G_Spatial(nn.Module):
         hx, cx = states
         hx, cx = hx[0], cx[0]
         hx,cx = self.lstm_attention(inputs, hx,cx, features_local)     # (batch_size, 1, hidden_size)
-        combined = hx + cx#torch.cat((hx,cx), 1)
+        combined = torch.cat((hx,cx), 1)
 
         outputs = self.log_softmax(self.fc(combined))             # (batch_size, vocab_size)
         confidences, best_choices = outputs.topk(n)
@@ -322,7 +322,7 @@ class G_Spatial(nn.Module):
                 out_states, out_context = self.lstm_attention(inputs,
                  cached_states[choice_index], cached_context[choice_index], features_local) # (batch_size, 1, hidden_size)
 
-                combined = out_states + out_context#torch.cat((out_states,out_context), 1)
+                combined = torch.cat((out_states,out_context), 1)
                 outputs = self.log_softmax(self.fc(combined))                       # (batch_size, vocab_size)
 
                 # pick n best nodes for each possible choice
