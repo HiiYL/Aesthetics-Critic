@@ -139,11 +139,15 @@ class G_Spatial(nn.Module):
         self.v2h = nn.Linear(embed_size * 2, embed_size)
 
         self.lstm_cell = nn.LSTMCell(embed_size, hidden_size)
-        self.attn = nn.Linear( hidden_size * 2, 64)
+        self.attn = nn.Linear( hidden_size, 64 + 1)
 
         self.log_softmax = nn.LogSoftmax()
         self.dropout = nn.Dropout()
         self.relu = nn.ReLU()
+
+        self.sentinel_igate = nn.Linear(hidden_size, hidden_size)
+        self.sentinel_hgate = nn.Linear(hidden_size, hidden_size)
+
         self._initialize_weights()
 
     def _initialize_weights(self):
@@ -157,14 +161,20 @@ class G_Spatial(nn.Module):
         inputs = self.v2h(inputs)
         inputs = self.dropout(inputs)
 
-        hx, cx = self.lstm_cell(inputs, (hx,cx))
+        hy, cy = self.lstm_cell(inputs, (hx,cx))
 
-        attn_input = torch.cat((inputs, hx), 1)
-        attn_weights = F.softmax(self.attn(attn_input))
-        visual_cx = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
-        cx = cx + visual_cx
+        sentinel_i, sentinel_h = self.sentinel_igate(inputs), self.sentinel_hgate(hx)
+        sentinel_gate = F.sigmoid(sentinel_i + sentinel_h)
+        sentinel = sentinel_gate * F.tanh(cy)
+
+        features_with_sentinel = torch.cat((features, sentinel.unsqueeze(1)),1)
+        attn_weights = F.softmax(self.attn(hy))
+        visual_cy = torch.bmm(attn_weights.unsqueeze(1), features_with_sentinel).squeeze(1)
+
+        beta = attn_weights[:,-1].unsqueeze(1).expand_as(sentinel)
+        cy_hat = beta * sentinel + (1 - beta) * visual_cy
         
-        return hx, cx
+        return hy, cy_hat
 
          
     def forward(self, features, captions, lengths, state, teacher_forced=True):
