@@ -139,7 +139,7 @@ class G_Spatial(nn.Module):
         self.v2h = nn.Linear(embed_size * 2, embed_size)
 
         self.lstm_cell = nn.LSTMCell(embed_size, hidden_size)
-        self.attn = nn.Linear( hidden_size, 64 + 1)
+        self.attn = nn.Linear( hidden_size * 2, 64 + 1)
 
         self.log_softmax = nn.LogSoftmax()
         self.dropout = nn.Dropout()
@@ -150,6 +150,7 @@ class G_Spatial(nn.Module):
 
         self.sentinel_transform_gate = nn.Linear(hidden_size, hidden_size)
         self.hidden_transform_gate = nn.Linear(hidden_size, hidden_size)
+        self.input_transform_gate = nn.Linear(hidden_size, hidden_size)
 
         self._initialize_weights()
 
@@ -173,10 +174,11 @@ class G_Spatial(nn.Module):
         # Add sentinel column to feature
         features_with_sentinel = torch.cat((features, sentinel.unsqueeze(1)),1)
         # Calculate attention with sentinel
-        attn_input = F.tanh(self.hidden_transform_gate(hy) + self.sentinel_transform_gate(sentinel))
+        z_t  = F.tanh(self.hidden_transform_gate(hy) + self.input_transform_gate(inputs))
+        st_t = F.tanh(self.hidden_transform_gate(hy) + self.sentinel_transform_gate(sentinel))
+        
+        attn_input = torch.cat((z_t, st_t), 1)
         attn_weights = F.softmax(self.attn(attn_input))
-
-
         visual_cy = torch.bmm(attn_weights.unsqueeze(1), features_with_sentinel).squeeze(1)
 
         beta = attn_weights[:,-1].unsqueeze(1).expand_as(sentinel)
