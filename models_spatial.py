@@ -139,7 +139,8 @@ class G_Spatial(nn.Module):
         self.v2h = nn.Linear(embed_size * 2, embed_size)
 
         self.lstm_cell = nn.LSTMCell(embed_size, hidden_size)
-        self.attn = nn.Linear( hidden_size * 2, 64 + 1)
+        self.attn_visual = nn.Linear( hidden_size, 64)
+        self.attn_sentinel = nn.Linear( hidden_size, 1)
 
         self.log_softmax = nn.LogSoftmax()
         self.dropout = nn.Dropout()
@@ -176,9 +177,11 @@ class G_Spatial(nn.Module):
         # Calculate attention with sentinel
         z_t  = F.tanh(self.hidden_transform_gate(hy) + self.input_transform_gate(inputs))
         st_t = F.tanh(self.hidden_transform_gate(hy) + self.sentinel_transform_gate(sentinel))
+
+        visual_atten   = self.attn_visual(z_t)
+        sentinel_atten = self.attn_sentinel(st_t)
         
-        attn_input = torch.cat((z_t, st_t), 1)
-        attn_weights = F.softmax(self.attn(attn_input))
+        attn_weights = F.softmax(torch.cat((visual_atten, sentinel_atten), 1))
         visual_cy = torch.bmm(attn_weights.unsqueeze(1), features_with_sentinel).squeeze(1)
 
         beta = attn_weights[:,-1].unsqueeze(1).expand_as(sentinel)
